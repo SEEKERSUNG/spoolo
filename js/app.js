@@ -17,12 +17,6 @@
   var pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
   var fmtEv = function (v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1); };
 
-  var DEMOS = [
-    { src: 'assets/samples/negative-portrait.jpg', label: '窗边人像' },
-    { src: 'assets/samples/negative-night.jpg', label: '雨夜街头' },
-    { src: 'assets/samples/negative-coast.jpg', label: '黄昏海岸' }
-  ];
-
   /* ---------- 状态 ---------- */
   var state = {
     filmIndex: 0,
@@ -31,9 +25,7 @@
     stream: null,
     live: false,
     mirror: false,
-    source: 'none',           /* camera | demo | file | none */
-    demoIndex: 0,
-    demoChoice: false,        /* 用户主动选了示范底片（不再自动抢镜头） */
+    source: 'none',           /* camera | file | none */
     camErr: null,             /* 最近一次镜头启动失败的错误名 */
     busy: false,
     dirty: true,
@@ -48,7 +40,7 @@
   var prefs = loadPrefs();
   prefs.timer = prefs.timer || 0;
   state.filmIndex = filmIndexOf(prefs.film);
-  state.ev = prefs.ev || 0;
+  state.ev = Math.max(-6, Math.min(6, prefs.ev || 0));
 
   function loadPrefs() {
     var d = { film: 'PT-400', ev: 0, grid: true, date: false, sound: true, timer: 0, roll: 1, frame: 1 };
@@ -90,6 +82,8 @@
     roEv: $('#roEv'),
     roLeft: $('#roLeft'),
     evValue: $('#evValue'),
+    evWheel: $('#evWheel'),
+    evDrum: $('#evDrum'),
     timerVal: $('#timerVal'),
     notice: $('#vfNotice'),
     noticeText: $('#vfNoticeText'),
@@ -98,7 +92,6 @@
     scrim: $('#scrim'),
     frames: $('#frames'),
     filmList: $('#filmList'),
-    demoList: $('#demoList'),
     negatives: $('#negatives'),
     albumStat: $('#albumStat'),
     lightbox: $('#lightbox'),
@@ -144,7 +137,7 @@
 
   function activeSource() {
     if (state.source === 'camera') return el.video;
-    if (state.source === 'demo' || state.source === 'file') return el.still;
+    if (state.source === 'file') return el.still;
     return null;
   }
 
@@ -181,7 +174,7 @@
     ctx.putImageData(d, 0, 0);
   }
 
-  /* 非实时源（示范底片 / 导入）：换卷或调曝光时立即重冲，不等 rAF。
+  /* 非实时源（导入的底片）：换卷或调曝光时立即重冲，不等 rAF。
      手机在省电等场景会冻结 requestAnimationFrame，仅靠 loop 会显得「不实时」 */
   function refreshPreview() {
     state.dirty = true;
@@ -222,7 +215,7 @@
     stopCamera();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       /* 手机浏览器只在安全上下文（HTTPS / localhost）放行镜头 */
-      useDemo(state.demoIndex, window.isSecureContext ? '浏览器不支持镜头调用' : '手机只允许 HTTPS 调用镜头');
+      failCamera(window.isSecureContext ? '浏览器不支持镜头调用' : '手机只允许 HTTPS 调用镜头');
       return Promise.resolve(false);
     }
     camStart = navigator.mediaDevices.getUserMedia({
@@ -236,7 +229,6 @@
       state.source = 'camera';
       state.live = true;
       state.camErr = null;
-      state.demoChoice = false;
       el.video.srcObject = stream;
       el.video.style.display = 'block';
       el.still.hidden = true;
@@ -252,7 +244,7 @@
         : err && err.name === 'NotFoundError' ? '没有找到摄像头'
         : err && err.name === 'NotReadableError' ? '镜头被其他应用占用'
         : '无法访问镜头';
-      useDemo(state.demoIndex, why);
+      failCamera(why);
       return false;
     }).then(function (v) { camStart = null; return v; },
             function (e) { camStart = null; throw e; });
@@ -260,7 +252,7 @@
   }
 
   /* 连上镜头后画面可能还要缓一会儿（iPhone 上尤其明显）。出画了就把提示收干净；
-     迟迟不出画只给一句准确的说明，绝不退回示范底片——那正是「明明连上了却提示未连接」的来源 */
+     迟迟不出画只给一句准确的说明，不再反过来报「未连接」——那正是误报的来源 */
   var videoTimer = null;
   function startVideo() {
     var v = el.video;
@@ -285,23 +277,22 @@
     v.addEventListener('playing', onReady);
     videoTimer = setTimeout(function () {
       if (painted()) return;
-      showNotice('镜头已连接，画面还在缓冲…一直黑屏就点「重试」或切一下前后摄');
+      showNotice('镜头已连接，画面还在缓冲…一直黑屏就点「重试」或切一下前后摄', 'info');
     }, 6000);
   }
 
   /* 手机浏览器（尤其 iOS Safari）要求摄像头调用发生在「用户手势」里，页面加载时的自动启动
      会被静默拒绝。各家的错误名还不统一（NotAllowedError / NotFoundError / SecurityError 都见
-     过），所以任何失败都保留监听：用户一碰页面就立刻重试，最多补试 3 次，连上或改用示范底片
-     后自动摘除 */
+     过），所以任何失败都保留监听：用户一碰页面就立刻重试，最多补试 3 次；一旦连上镜头、或
+     用户自己导入了底片，就摘掉监听——绝不顶掉他已经选好的画面 */
   function armCameraRetry() {
-    if (state.demoChoice) return;
     var left = 3;
     var detach = function () {
       document.removeEventListener('pointerdown', onGesture);
       document.removeEventListener('keydown', onGesture);
     };
     var onGesture = function () {
-      if (state.demoChoice || state.source === 'camera') { detach(); return; }
+      if (state.source === 'camera' || state.source === 'file') { detach(); return; }
       if (state.busy) return;
       if (left-- <= 0) { detach(); return; }
       startCamera(state.facing).then(function (ok) { if (ok) detach(); });
@@ -320,35 +311,39 @@
     state.live = false;
   }
 
-  function useDemo(index, why) {
-    stopCamera();
-    var d = DEMOS[index % DEMOS.length];
-    state.demoIndex = index % DEMOS.length;
-    state.mirror = false;
-    loadSource(d.src, d.label, why || '示范底片');
+  /* 镜头打不开时：取景窗上写明原因，并给出「重试 / 导入底片」两个出口。
+     已经在冲洗导入的底片时不打扰 */
+  function failCamera(why) {
+    if (!activeSource()) showNotice(why, 'empty');
   }
 
-  function loadSource(src, label, why) {
+  /* 把一张图片装进取景窗当底片用（画面始终由画布输出） */
+  function loadSource(src) {
+    stopCamera();
+    state.mirror = false;
     el.video.style.display = 'none';
-    el.still.hidden = true;   /* 只当图源用，画面始终由画布输出 */
+    el.still.hidden = true;
     el.still.onload = function () {
-      /* 示范底片图还没下载完，镜头却已经先连上了：不能反过来把它顶掉 */
+      /* 图片还没解码完，镜头却先连上了：不能反过来把镜头画面顶掉 */
       if (state.source === 'camera') return;
-      state.source = 'demo';
+      state.source = 'file';
       state.dirty = true;
-      if (!why) hideNotice();
-      showNotice((why ? why + ' · ' : '') + '示范底片「' + label + '」');
+      hideNotice();
       layoutPreview();
     };
     el.still.onerror = function () { state.source = 'none'; };
     el.still.src = src;
   }
 
-  function showNotice(text) {
+  function showNotice(text, kind) {
     el.noticeText.textContent = text;
+    el.notice.dataset.kind = kind || 'info';
     el.notice.hidden = false;
   }
-  function hideNotice() { el.notice.hidden = true; }
+  function hideNotice() {
+    el.notice.hidden = true;
+    delete el.notice.dataset.kind;
+  }
 
   /* ======================================================================
      影调取景器变量（颗粒 / 暗角 / 漏光）
@@ -788,10 +783,9 @@
     }
     var r = new FileReader();
     r.onload = function () {
-      loadSource(r.result, file.name || '本地底片', null);
-      state.dirty = true;
+      loadSource(r.result);
       closeLab();
-      toast('已装入本地底片 · 按下快门即可冲洗');
+      toast('已装入「' + (file.name || '本地底片') + '」· 按下快门即可冲洗');
     };
     r.readAsDataURL(file);
   }
@@ -937,9 +931,17 @@
     if (b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
 
+  function syncEvWheel() {
+    /* 每 1/3 档让滚轮纹理移动 3px；负号让向上拨动时纹理向上走 */
+    el.evDrum.style.setProperty('--ev-spin', (-state.ev * 3).toFixed(0));
+    el.evWheel.setAttribute('aria-valuenow', (state.ev / 3).toFixed(2));
+    el.evWheel.setAttribute('aria-valuetext', fmtEv(state.ev / 3) + ' EV');
+  }
+
   function updateEv() {
     el.evValue.textContent = fmtEv(state.ev / 3);
     el.roEv.textContent = fmtEv(state.ev / 3);
+    syncEvWheel();
     prefs.ev = state.ev;
     savePrefs();
     refreshPreview();
@@ -955,16 +957,10 @@
       if (!b) return;
       var act = b.dataset.act;
       if (act === 'flip') {
-        if (state.live) {
-          startCamera(state.facing === 'user' ? 'environment' : 'user');
-        } else if (!state.demoChoice) {
-          /* 还没真正连上镜头：先尝试连镜头，而不是继续换示范片 */
-          startCamera(state.facing).then(function (ok) {
-            if (!ok) toast('镜头没能启动 · 可用示范底片拍摄');
-          });
-        } else {
-          useDemo(state.demoIndex + 1);
-        }
+        if (state.live) startCamera(state.facing === 'user' ? 'environment' : 'user');
+        else startCamera(state.facing).then(function (ok) {
+          if (!ok) toast('镜头没能启动 · 可以导入一张底片来冲洗');
+        });
       } else if (act === 'timer') {
         prefs.timer = prefs.timer === 0 ? 3 : prefs.timer === 3 ? 10 : 0;
         savePrefs();
@@ -992,28 +988,58 @@
       }
     });
 
-    /* EV 拨轮：单击 ±1/3 档，按住连发 */
-    var evTimer = null;
-    $$('.ev-btn').forEach(function (b) {
-      var dir = Number(b.dataset.ev);
-      var repeat = function () {
-        state.ev = Math.max(-6, Math.min(6, state.ev + dir));
-        updateEv();
-        Sound.play('tick');
-      };
-      var startHold = function () {
-        repeat();
-        clearInterval(evTimer);
-        evTimer = setInterval(repeat, 170);
-      };
-      var stopHold = function () { clearInterval(evTimer); };
-      b.addEventListener('pointerdown', startHold);
-      b.addEventListener('pointerup', stopHold);
-      b.addEventListener('pointerleave', stopHold);
-      b.addEventListener('pointercancel', stopHold);
-      b.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); repeat(); }
-      });
+    /* EV 垂直滚轮：上下拖动 / 鼠标滚轮持续拨动，按 1/3 档吸附 */
+    var evDragging = false;
+    var evStartY = 0;
+    var evStartEv = 0;
+    var evLastTick = 0;
+    var evTick = function () {
+      var now = performance.now();
+      if (now - evLastTick > 55) { evLastTick = now; Sound.play('tick'); }
+    };
+    var setEv = function (v) {
+      v = Math.max(-6, Math.min(6, v));
+      if (v === state.ev) return;
+      state.ev = v;
+      updateEv();
+      evTick();
+    };
+    el.evWheel.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      evDragging = true;
+      evStartY = e.clientY;
+      evStartEv = state.ev;
+      el.evWheel.classList.add('is-dragging');
+      if (el.evWheel.setPointerCapture) el.evWheel.setPointerCapture(e.pointerId);
+      el.evWheel.focus({ preventScroll: true });
+    });
+    el.evWheel.addEventListener('pointermove', function (e) {
+      if (!evDragging) return;
+      var steps = Math.round((evStartY - e.clientY) / 12);
+      setEv(evStartEv + steps);
+    });
+    var endEvDrag = function () {
+      evDragging = false;
+      el.evWheel.classList.remove('is-dragging');
+    };
+    el.evWheel.addEventListener('pointerup', endEvDrag);
+    el.evWheel.addEventListener('pointercancel', endEvDrag);
+    el.evWheel.addEventListener('lostpointercapture', endEvDrag);
+    el.evWheel.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      setEv(state.ev + (e.deltaY < 0 ? 1 : -1));
+    }, { passive: false });
+    el.evWheel.addEventListener('keydown', function (e) {
+      var k = e.key, v = state.ev;
+      if (k === 'ArrowUp' || k === 'ArrowRight') v += 1;
+      else if (k === 'ArrowDown' || k === 'ArrowLeft') v -= 1;
+      else if (k === 'PageUp') v += 3;
+      else if (k === 'PageDown') v -= 3;
+      else if (k === 'Home') v = -6;
+      else if (k === 'End') v = 6;
+      else return;
+      e.preventDefault();
+      setEv(v);
     });
 
     /* 胶卷旋钮 */
@@ -1091,10 +1117,7 @@
       if (el.fileInput.files && el.fileInput.files[0]) onFile(el.fileInput.files[0]);
     });
     $('#vfRetry').addEventListener('click', function () { startCamera(state.facing); });
-    $('#vfSwap').addEventListener('click', function () {
-      state.demoChoice = true;
-      useDemo(state.demoIndex + 1);
-    });
+    $('#vfImport').addEventListener('click', pickFile);
 
     /* 灯箱 */
     el.lightbox.addEventListener('click', function (e) {
@@ -1108,17 +1131,6 @@
 
     el.toastUndo.addEventListener('click', function () {
       if (toastAction) { var fn = toastAction; toastAction = null; clearTimeout(toastTimer); el.toast.classList.remove('show'); el.toast.hidden = true; fn(); }
-    });
-
-    /* 示例底片 */
-    el.demoList.addEventListener('click', function (e) {
-      var b = e.target.closest('.demo-load');
-      if (!b) return;
-      var i = Number(b.dataset.index);
-      state.demoChoice = true;
-      useDemo(i);
-      closeLab();
-      toast('已装入示范底片「' + DEMOS[i].label + '」· 按快门冲洗');
     });
 
     /* 键盘快捷键 */
@@ -1173,13 +1185,6 @@
     updateEv();
     updateCounter();
 
-    /* 示范底片列表 */
-    el.demoList.innerHTML = DEMOS.map(function (d, i) {
-      return '<li><button class="demo-load" type="button" data-index="' + i + '" aria-label="使用示范底片：' + d.label + '">' +
-        '<img src="' + d.src + '" alt="" loading="lazy">' +
-        '<span class="demo-tag">示范底片</span><span class="demo-name">' + d.label + '</span></button></li>';
-    }).join('');
-
     bindControls();
     refreshAlbum();
     layoutPreview();
@@ -1188,8 +1193,8 @@
     startCamera(prefs.facing === 'user' ? 'user' : 'environment').then(function (ok) {
       if (ok) return;
       toast(window.isSecureContext
-        ? '镜头没能启动 · 先用示范底片拍几张试试'
-        : '手机浏览器只允许 HTTPS 调用镜头 · 先用示范底片试试');
+        ? '镜头没能启动 · 点取景窗上的「导入底片」'
+        : '手机浏览器只允许 HTTPS 调用镜头 · 也可以导入一张底片');
       armCameraRetry();
     });
   }

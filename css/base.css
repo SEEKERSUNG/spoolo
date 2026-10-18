@@ -3,6 +3,8 @@
    ========================================================================== */
 
 :root {
+  color-scheme: dark;
+
   /* 机身金属 */
   --alu-1: oklch(90% 0.008 92);
   --alu-2: oklch(82% 0.008 90);
@@ -162,8 +164,8 @@ button, input, select { font: inherit; color: inherit; }
   }
 }
 
-/* 手机：整机锁成一屏；取景框保持 135 胶卷的 3:2 横构图，让 CMOS 的横向像素都用上，
-   多出来的高度交给控制台，页面不再上下滚动 */
+/* 手机：整机锁成一屏。横屏取景框保持 135 胶卷的 3:2 横构图，让 CMOS 的横向像素都用上；
+   竖屏的取景框与两侧导轨由下面的 portrait 规则接管 */
 @media (max-width: 999px) {
   html, body {
     height: 100vh;
@@ -174,7 +176,7 @@ button, input, select { font: inherit; color: inherit; }
   }
   .stage {
     height: 100%;
-    padding: 10px 12px calc(38px + env(safe-area-inset-bottom));
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -189,72 +191,202 @@ button, input, select { font: inherit; color: inherit; }
   .viewfinder { flex: none; }
 }
 
-/* 手机竖屏：取景框竖过来（3:4，贴合 CMOS 的 4:3 转 90°），并把取景框两侧原本空着的胶片边
-   做成功能键的竖排导轨——功能键从控制台里“抬”出来，省下的高度全给取景框，矮屏也看得见快门 */
+/* 手机竖屏：取景框竖过来（3:4，贴合 CMOS 的 4:3 转 90°）。功能键收成取景框两侧的
+   紧凑按键，曝光 / 快门 / 影集合并成一块底部控制面板，机身留白由网格均匀分配 */
 @media (max-width: 999px) and (orientation: portrait) {
-  :root { --rail: 44px; --perf-w: 12px; }
+  :root { --rail: 42px; --perf-w: 10px; }
 
   .shell {
     display: grid;
     grid-template-columns: var(--rail) minmax(0, 1fr) var(--rail);
-    grid-template-rows: repeat(3, auto) auto auto auto;
-    column-gap: 6px;
-    align-content: space-between;
+    grid-template-rows: auto auto auto;
+    align-content: space-evenly;
+    align-items: center;
+    column-gap: 5px;
+    row-gap: 6px;
+    padding: 10px 10px 12px;
   }
   /* 提高权重：.deck / .fn-row 的 display 规则写在 css/ui.css，那边同权重会赢 */
   .shell > .deck, .shell .fn-row { display: contents; }
-  /* 展平后成网格项，不再需要 .deck 的 padding 与 gap */
 
-  .viewfinder { grid-row: 1 / 4; grid-column: 2; }
+  .viewfinder {
+    grid-row: 1;
+    grid-column: 2;
+    align-self: center;
+    display: grid;
+  }
   .viewfinder > .filmstrip {
     display: flex;
     align-items: center;
     justify-content: center;
     width: 100%;
     min-width: 0;
+    padding: 5px 0;
   }
-  .filmstrip > .perf { flex: 0 0 var(--perf-w); align-self: stretch; }
+  .filmstrip > .perf {
+    flex: 0 0 var(--perf-w);
+    align-self: stretch;
+    background-size: 10px 16px;
+  }
   .filmstrip > .frame {
     flex: 0 1 auto;
     width: 100%;
     height: auto;
     aspect-ratio: 3 / 4;
+    border-radius: 3px;
   }
 
-  /* 六个功能键：左边三个、右边三个，竖着排在取景框两侧 */
-  .shell .fn { align-content: center; }
-  .shell .fn[data-act="flip"]   { grid-row: 1; grid-column: 1; }
-  .shell .fn[data-act="timer"]  { grid-row: 2; grid-column: 1; }
-  .shell .fn[data-act="grid"]   { grid-row: 3; grid-column: 1; }
-  .shell .fn[data-act="date"]   { grid-row: 1; grid-column: 3; }
-  .shell .fn[data-act="sound"]  { grid-row: 2; grid-column: 3; }
-  .shell .fn[data-act="import"] { grid-row: 3; grid-column: 3; }
-
-  .chamber { grid-row: 4; grid-column: 1 / -1; }
-  .shell .ev      { grid-row: 5; }
-  .shell .shutter { grid-row: 6; }
-  .shell .peek    { grid-row: 6; }
-
-  /* 控制台底板：deck 被展平后，用伪元素把面板画回来 */
-  .shell::after {
+  /* 两侧导轨：三枚按键居中成一组，背后一条很淡的凹槽把它们串起来 */
+  .shell .rail {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    gap: 12px;
+    grid-row: 1;
+  }
+  .shell .rail-left { grid-column: 1; }
+  .shell .rail-right { grid-column: 3; }
+  .shell .rail::before {
     content: '';
-    grid-row: 5 / 7;
-    grid-column: 1 / -1;
-    border-radius: 18px;
-    background: linear-gradient(180deg, oklch(30% 0.008 72), oklch(22% 0.008 70));
-    box-shadow:
-      0 1px 0 oklch(100% 0 0 / 0.12) inset,
-      0 -2px 10px -8px oklch(0% 0 0 / 0.9) inset,
-      0 10px 24px -18px oklch(0% 0 0 / 0.9);
+    position: absolute;
+    top: -11px;
+    bottom: -11px;
+    left: 50%;
+    width: 1px;
+    background: linear-gradient(180deg,
+      transparent, oklch(100% 0 0 / 0.09) 16%,
+      oklch(100% 0 0 / 0.09) 84%, transparent);
   }
-  .shell .ev, .shell .shutter, .shell .peek { position: relative; z-index: 1; }
-  .shell .ev { margin: 12px 12px 0; }
-  .shell .shutter { margin-bottom: 14px; }
-  .shell .peek { margin: 0 12px 14px 0; }
+  .shell .fn {
+    width: 38px;
+    height: 50px;
+    min-height: 0;
+    padding: 0 0 3px;
+    grid-template-rows: 34px auto;
+    gap: 2px;
+  }
+
+  /* 胶卷仓：旋钮 / 标签 / 胶卷库按钮等高对齐 */
+  .chamber {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    grid-template-columns: 42px minmax(0, 1fr) 54px;
+    align-items: center;
+    gap: 7px;
+    margin-top: 0;
+  }
+  .chamber .roll-knob { width: 42px; align-self: center; }
+  .chamber .roll-cap { width: 36px; height: 36px; }
+  .chamber .engrave { font-size: 8px; letter-spacing: 0.18em; }
+  .chamber .canister {
+    height: 54px;
+    min-height: 54px;
+    padding: 5px 24px 5px 13px;
+    border-radius: 9px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .chamber .canister-bars { display: none; }
+  .chamber .canister-swatch { width: 6px; }
+  .chamber .canister-body { gap: 1px; }
+  .chamber .canister-code { font-size: 15px; line-height: 1.05; }
+  .chamber .canister-name { display: block; font-size: 10.5px; line-height: 1.35; }
+  .chamber .canister-meta { font-size: 8px; line-height: 1.3; letter-spacing: 0.05em; }
+  .chamber .chip {
+    position: relative;
+    width: 54px;
+    min-width: 54px;
+    height: 54px;
+    min-height: 54px;
+    padding: 4px 2px;
+    border-radius: 11px;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 8.5px;
+    letter-spacing: 0;
+    line-height: 1.1;
+  }
+  .chamber .chip-icon { width: 15px; height: 15px; }
+  .chamber .chip-count {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    padding: 1px 3px;
+    font-size: 8px;
+    line-height: 1.1;
+    border-radius: 4px;
+  }
+
+  /* 底部控制面板：EV 居左、快门居中、影集居右 */
+  .shell .release {
+    position: relative;
+    z-index: 1;
+    grid-row: 3;
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+    margin-top: 0;
+    padding: 8px 10px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, oklch(29% 0.008 72), oklch(21% 0.008 70));
+    box-shadow:
+      0 1px 0 oklch(100% 0 0 / 0.1) inset,
+      0 -1px 0 oklch(0% 0 0 / 0.55) inset,
+      0 10px 22px -18px oklch(0% 0 0 / 0.95);
+  }
+  .shell .release .ev {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    gap: 6px;
+  }
+  .shell .ev-read { min-width: 44px; padding: 3px 4px; }
+  .shell .ev-value { font-size: 12px; }
+  .shell .ev-read .engrave { font-size: 8px; }
+  .shell .shutter {
+    grid-column: 2;
+    grid-row: 1;
+    width: clamp(62px, 17.5vw, 72px);
+    height: clamp(62px, 17.5vw, 72px);
+    justify-self: center;
+  }
+  .shell .shutter-core {
+    width: clamp(38px, 11vw, 44px);
+    height: clamp(38px, 11vw, 44px);
+  }
+  .shell .peek {
+    grid-column: 3;
+    grid-row: 1;
+    width: clamp(44px, 12.8vw, 52px);
+    height: clamp(44px, 12.8vw, 52px);
+    justify-self: end;
+    padding: 4px;
+    border-radius: 10px;
+  }
+  .shell .peek-empty { font-size: 8px; }
 }
 
-/* 极矮的横屏 / 小屏：回到可滚动，避免机身被裁掉 */
-@media (max-width: 999px) and (max-height: 680px) {
+/* 极窄屏：取景窗读数与机身铭牌收紧，避免折行 */
+@media (max-width: 999px) and (orientation: portrait) and (max-width: 340px) {
+  .frame .ro-ev { display: none; }
+  .maker-sub { display: none; }
+  .maker-format { display: none; }
+  .maker-name { font-size: 14px; }
+}
+
+/* 极矮的横屏：回到可滚动，避免机身被裁掉 */
+@media (max-width: 999px) and (orientation: landscape) and (max-height: 680px) {
+  html, body { height: auto; min-height: 100vh; overflow: auto; }
+  .stage { height: auto; }
+}
+
+/* 极矮的竖屏（老式 4 英寸屏）：同样退回可滚动 */
+@media (max-width: 999px) and (orientation: portrait) and (max-height: 520px) {
   html, body { height: auto; min-height: 100vh; overflow: auto; }
   .stage { height: auto; }
 }
@@ -337,6 +469,30 @@ button, input, select { font: inherit; color: inherit; }
   letter-spacing: 0.16em;
   color: oklch(44% 0.012 76 / 0.85);
   text-shadow: 0 1px 0 oklch(100% 0 0 / 0.4);
+}
+.maker-meta {
+  margin-top: 1px;
+  font: 400 8px/1.25 var(--font-mono);
+  letter-spacing: 0.05em;
+  color: oklch(44% 0.012 76 / 0.78);
+  text-shadow: 0 1px 0 oklch(100% 0 0 / 0.4);
+  white-space: nowrap;
+}
+.maker-meta a {
+  color: inherit;
+  text-decoration: none;
+  padding: 4px 3px;
+  margin: -4px -3px;
+  border-bottom: 1px dotted oklch(44% 0.012 76 / 0.55);
+  transition: color 160ms var(--ease-out), border-color 160ms var(--ease-out);
+}
+.maker-meta a:hover {
+  color: oklch(32% 0.10 60);
+  border-color: currentColor;
+}
+/* 桌面端署名仍在暗房侧栏底部，避免重复 */
+@media (min-width: 1000px) {
+  .maker-meta { display: none; }
 }
 
 /* 计数窗：琥珀色 LED */
@@ -578,6 +734,17 @@ button, input, select { font: inherit; color: inherit; }
   /* 允许折行：镜头失败的原因可能是「手机只允许 HTTPS 调用镜头」这类长句 */
   overflow: hidden;
 }
+.vf-notice-icon { display: none; }
+.vf-notice-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.vf-notice-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .vf-notice .link {
   padding: 3px 7px;
   border: 1px solid oklch(100% 0 0 / 0.24);
