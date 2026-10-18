@@ -127,7 +127,7 @@
 
   /* --- 显示用指标（1-5 格）--------------------------------------------- */
   function meters(f) {
-    var contrast = f.bw ? f.contrast[0] * 0.98
+    var contrast = f.bw ? f.contrast * 0.98
       : (f.contrast[0] + f.contrast[1] + f.contrast[2]) / 3;
     var sat = f.bw ? 0 : f.sat;
     return {

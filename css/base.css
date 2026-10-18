@@ -140,34 +140,11 @@ button, input, select { font: inherit; color: inherit; }
   opacity: 0.6;
 }
 
-/* ---------- 抬头 ---------- */
-.masthead {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 32px 20px 8px;
-}
-.kicker {
-  font: 500 12px/1 var(--font-display);
-  letter-spacing: 0.34em;
-  color: var(--amber);
-}
-.kicker span { margin: 0 6px; color: var(--txt-3); }
-.masthead h1 {
-  margin: 14px 0 10px;
-  font: 300 clamp(1.9rem, 7vw, 2.9rem) / 1.08 var(--font-display);
-  letter-spacing: 0.01em;
-}
-.lede {
-  max-width: 46ch;
-  color: var(--txt-2);
-  font-size: var(--step--1);
-}
-
 /* ---------- 布局 ---------- */
 .stage {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 20px 16px calc(104px + env(safe-area-inset-bottom));
+  padding: 20px 16px calc(52px + env(safe-area-inset-bottom));
   display: grid;
   gap: 24px;
   align-items: start;
@@ -180,34 +157,40 @@ button, input, select { font: inherit; color: inherit; }
   }
 }
 
-/* ---------- 页脚署名 ---------- */
-.colophon {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 14px 20px calc(104px + env(safe-area-inset-bottom));
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px 18px;
-  border-top: 1px solid oklch(100% 0 0 / 0.08);
-  font: 400 10.5px/1.7 var(--font-mono);
-  letter-spacing: 0.12em;
-  color: var(--txt-3);
+/* 手机：整机锁成一屏，取景窗撑满剩余高度，页面不再上下滚动 */
+@media (max-width: 999px) {
+  html, body {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  .stage {
+    height: 100%;
+    padding: 10px 12px calc(40px + env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    align-items: stretch;
+  }
+  .camera { flex: 1 1 auto; min-height: 0; display: flex; }
+  .chassis { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .chassis > .plate { flex: none; }
+  .shell { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .shell > .chamber,
+  .shell > .deck { flex: none; }
+  .viewfinder { flex: 1 1 auto; min-height: 0; display: flex; }
+  .filmstrip { flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+  /* 提高权重，盖过后面的 .frame { aspect-ratio: 3/2 } */
+  .filmstrip > .frame { aspect-ratio: auto; min-height: 88px; }
 }
-.colophon p { margin: 0; }
-.colophon .ver span { margin: 0 7px; color: oklch(100% 0 0 / 0.22); }
-.colophon .ver b { font-weight: 600; color: var(--amber); }
-.colophon a {
-  color: var(--txt-2);
-  text-decoration: none;
-  padding-bottom: 1px;
-  border-bottom: 1px solid oklch(100% 0 0 / 0.16);
-  transition: color 160ms var(--ease-out), border-color 160ms var(--ease-out);
-}
-.colophon a:hover { color: var(--amber); border-color: oklch(80% 0.16 68 / 0.55); }
-@media (min-width: 1000px) {
-  .colophon { padding-bottom: 64px; }
+
+/* 极矮的横屏：回到可滚动，避免机身被裁掉 */
+@media (max-width: 999px) and (max-height: 520px) {
+  html, body { height: auto; min-height: 100vh; overflow: auto; }
+  .stage { height: auto; }
+  .filmstrip > .frame { aspect-ratio: 3 / 2; }
 }
 
 /* ==========================================================================
@@ -390,14 +373,16 @@ button, input, select { font: inherit; color: inherit; }
   box-shadow: inset 0 0 30px oklch(0% 0 0 / 0.9);
 }
 
+/* 注意：#still 这里不能写 display，否则会盖掉 [hidden] 的 display:none，
+   未冲印的原图就会摞在画布上面，换胶卷时看到的永远是原图 */
 #cam, #preview, #still {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
 }
+#cam, #preview { display: block; }
 #still { object-position: center; }
 .frame.is-mirrored #cam,
 .frame.is-mirrored #preview,

@@ -33,6 +33,8 @@
     mirror: false,
     source: 'none',           /* camera | demo | file | none */
     demoIndex: 0,
+    demoChoice: false,        /* 用户主动选了示范底片（不再自动抢镜头） */
+    camErr: null,             /* 最近一次镜头启动失败的错误名 */
     busy: false,
     dirty: true,
     running: true,
@@ -104,8 +106,6 @@
     lbCode: $('#lbCode'),
     lbName: $('#lbName'),
     lbMeta: $('#lbMeta'),
-    redevForm: $('#redevForm'),
-    redevSelect: $('#redevSelect'),
     processing: $('#processing'),
     procBar: $('#procBar'),
     procTitle: $('#procTitle'),
@@ -132,12 +132,14 @@
     var target = 240000 * state.previewScale * 2;
     var scale = Math.min(1.05, Math.sqrt(target / (r.width * r.height * dpr * dpr)));
     pw = Math.max(200, Math.round(r.width * dpr * scale));
-    ph = Math.max(132, Math.round(pw * 2 / 3));
+    ph = Math.max(120, Math.round(pw * r.height / r.width));  /* 跟随取景窗实际比例，竖屏不被拉伸 */
     if (el.preview.width !== pw || el.preview.height !== ph) {
       el.preview.width = pw;
       el.preview.height = ph;
     }
     state.dirty = true;
+    /* 改画布尺寸会把画布清空，静态图源立刻补画一张，不等 rAF */
+    if (state.source !== 'camera') drawPreview();
   }
 
   function activeSource() {
@@ -179,6 +181,13 @@
     ctx.putImageData(d, 0, 0);
   }
 
+  /* 非实时源（示范底片 / 导入）：换卷或调曝光时立即重冲，不等 rAF。
+     手机在省电等场景会冻结 requestAnimationFrame，仅靠 loop 会显得「不实时」 */
+  function refreshPreview() {
+    state.dirty = true;
+    if (state.source !== 'camera') drawPreview();
+  }
+
   var lastFrame = 0, frameTimes = [], lastAdapt = 0;
   function loop(now) {
     requestAnimationFrame(loop);
@@ -210,7 +219,7 @@
     stopCamera();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       useDemo(state.demoIndex, '浏览器不支持镜头调用');
-      return Promise.resolve();
+      return Promise.resolve(false);
     }
     return navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -224,19 +233,61 @@
       el.video.srcObject = stream;
       el.video.style.display = 'block';
       el.still.hidden = true;
-      return el.video.play().catch(function () { /* 自动播放被拦下也无妨 */ });
-    }).then(function () {
-      hideNotice();
-      layoutPreview();
       setPressed('flip', state.facing === 'user');
-      return true;
+      try {
+        var p = el.video.play();
+        if (p && p.catch) p.catch(function () { /* 自动播放被拦下也无妨 */ });
+      } catch (e) { /* 个别内核对 play() 同步抛错，忽略 */ }
+
+      /* 等到真正出画再撤提示，避免「已授权但黑屏」时误报已连接 */
+      return new Promise(function (resolve) {
+        var settled = false;
+        var finish = function (ok) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          el.video.removeEventListener('loadedmetadata', onMeta);
+          resolve(ok);
+        };
+        var onMeta = function () { finish(el.video.videoWidth > 0); };
+        var timer = setTimeout(function () { finish(el.video.videoWidth > 0); }, 4000);
+        if (el.video.videoWidth > 0) { finish(true); return; }
+        el.video.addEventListener('loadedmetadata', onMeta);
+      });
+    }).then(function (ready) {
+      if (ready) {
+        state.camErr = null;
+        state.demoChoice = false;
+        hideNotice();
+        layoutPreview();
+        return true;
+      }
+      useDemo(state.demoIndex, '镜头画面未能就绪');
+      return false;
     }).catch(function (err) {
+      state.camErr = err && err.name ? err.name : 'UnknownError';
       var why = err && err.name === 'NotAllowedError' ? '镜头权限被拒绝'
         : err && err.name === 'NotFoundError' ? '没有找到摄像头'
+        : err && err.name === 'NotReadableError' ? '镜头被其他应用占用'
         : '无法访问镜头';
       useDemo(state.demoIndex, why);
       return false;
     });
+  }
+
+  /* 部分手机浏览器要求「用户手势」才放行摄像头，页面加载时的自动启动会被静默拒绝：
+     首次触碰页面时自动再试一次（权限被明确拒绝 / 无摄像头时除外） */
+  function armCameraRetry() {
+    if (state.demoChoice) return;
+    if (state.camErr === 'NotAllowedError' || state.camErr === 'NotFoundError') return;
+    var retry = function () {
+      document.removeEventListener('pointerdown', retry);
+      document.removeEventListener('keydown', retry);
+      if (state.source === 'camera' || state.busy) return;
+      startCamera(state.facing);
+    };
+    document.addEventListener('pointerdown', retry);
+    document.addEventListener('keydown', retry);
   }
 
   function stopCamera() {
@@ -308,7 +359,7 @@
     el.rollKnob.setAttribute('aria-valuetext', f.code + ' ' + f.name);
     el.rollKnob.style.setProperty('--rot', (i * 36) + 'deg');
     applyFilmVars(f);
-    state.dirty = true;
+    refreshPreview();
 
     var m = S.meters(f);
     el.canBars.innerHTML = meter('反差', m.contrast) + meter('颗粒', m.grain);
@@ -351,7 +402,6 @@
     });
     el.filmList.innerHTML = html;
     $('#filmCount').textContent = FILMS.length;
-    $('#filmCount2').textContent = FILMS.length;
   }
 
   /* ======================================================================
@@ -451,13 +501,20 @@
     });
   }
 
-  /* 从当前源裁出 3:2 的一帧 */
+  /* 从当前源裁出与取景窗同比例的一帧 */
   function grabFrame() {
     var src = activeSource();
     var size = sourceSize(src);
-    var crop = coverRect(size.w, size.h, 1.5);
-    var W = Math.min(1920, Math.round(crop.w));
-    var H = Math.round(W * 2 / 3);
+    var ratio = pw / ph;   /* 取景窗实际长宽比：手机竖屏拍出来的构图与所见的完全一致 */
+    var crop = coverRect(size.w, size.h, ratio);
+    var W, H;
+    if (ratio >= 1) {
+      W = Math.min(1920, Math.round(crop.w));
+      H = Math.max(1, Math.round(W / ratio));
+    } else {
+      H = Math.min(1920, Math.round(crop.h));
+      W = Math.max(1, Math.round(H * ratio));
+    }
     var c = document.createElement('canvas');
     c.width = W; c.height = H;
     var cc = c.getContext('2d');
@@ -597,7 +654,6 @@
       renderFrames(rows);
       var badge = String(rows.length);
       $('#albumBadge').textContent = badge;
-      $('#albumBadge2').textContent = badge;
       el.negatives.hidden = rows.length > 0;
       if (!rows.length) {
         el.albumStat.textContent = '还没有冲洗出照片';
@@ -667,12 +723,6 @@
       ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</dd>' +
       '<dt>尺寸</dt><dd>' + row.w + ' × ' + row.h + '</dd>' +
       '<dt>日期打印</dt><dd>' + (row.date ? '已开启' : '未开启') + '</dd>';
-    el.redevForm.hidden = true;
-    if (el.redevSelect.options.length !== FILMS.length) {
-      el.redevSelect.innerHTML = FILMS.map(function (f, i) {
-        return '<option value="' + i + '">' + f.code + ' · ' + f.name + '</option>';
-      }).join('');
-    }
     el.lightbox.showModal();
   }
 
@@ -698,56 +748,6 @@
         Store.add(row).then(refreshAlbum);
       });
     });
-  }
-
-  function redevelopCurrent(index) {
-    var row = state.current;
-    if (!row) return;
-    var film = FILMS[index];
-    el.lightbox.close();
-    state.busy = true;
-
-    var img = new Image();
-    var u = URL.createObjectURL(row.blob);
-    img.onload = function () {
-      URL.revokeObjectURL(u);
-      var W = row.w, H = row.h;
-      var c = document.createElement('canvas');
-      c.width = W; c.height = H;
-      c.getContext('2d').drawImage(img, 0, 0, W, H);
-
-      openProcessing(film, function () {
-        develop(c, W, H, film, {
-          ev: state.ev / 3, halation: true, grain: true, vignette: true, leak: true, seed: 99
-        });
-        return toBlob(c, 0.92).then(function (blob) {
-          return makeThumb(c, 240).then(function (thumb) {
-            var nf = {
-              id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
-              roll: prefs.roll, frameNo: prefs.frame,
-              code: film.code, name: film.name, en: film.en, iso: film.iso,
-              ev: state.ev / 3, w: W, h: H, date: false, ts: Date.now(),
-              blob: blob, thumb: thumb, from: row.id
-            };
-            return Store.add(nf).then(function () { return nf; });
-          });
-        });
-      }).then(function (nf) {
-        state.busy = false;
-        advanceFrame();
-        refreshAlbum();
-        toast('换卷重冲完成：' + nf.code + ' · #' + pad2(nf.frameNo));
-      }).catch(function () {
-        state.busy = false;
-        toast('重冲失败，请再试一次');
-      });
-    };
-    img.onerror = function () {
-      URL.revokeObjectURL(u);
-      state.busy = false;
-      toast('底片读取失败');
-    };
-    img.src = u;
   }
 
   /* ---------- 导入 ---------- */
@@ -793,6 +793,7 @@
     setTimeout(function () {
       if (!el.lab.classList.contains('open')) el.scrim.hidden = true;
     }, 340);
+    refreshPreview();
   }
 
   function setTab(tab) {
@@ -913,7 +914,7 @@
     el.roEv.textContent = fmtEv(state.ev / 3);
     prefs.ev = state.ev;
     savePrefs();
-    state.dirty = true;
+    refreshPreview();
   }
 
   function bindControls() {
@@ -928,6 +929,11 @@
       if (act === 'flip') {
         if (state.live) {
           startCamera(state.facing === 'user' ? 'environment' : 'user');
+        } else if (!state.demoChoice) {
+          /* 还没真正连上镜头：先尝试连镜头，而不是继续换示范片 */
+          startCamera(state.facing).then(function (ok) {
+            if (!ok) toast('镜头没能启动 · 可用示范底片拍摄');
+          });
         } else {
           useDemo(state.demoIndex + 1);
         }
@@ -1052,15 +1058,15 @@
     el.scrim.addEventListener('click', closeLab);
     $('#tabFilms').addEventListener('click', function () { setTab('films'); });
     $('#tabAlbum').addEventListener('click', function () { setTab('album'); });
-    $$('.tabbar button').forEach(function (b) {
-      b.addEventListener('click', function () { openLab(b.dataset.open); });
-    });
     $('#albumImport').addEventListener('click', pickFile);
     el.fileInput.addEventListener('change', function () {
       if (el.fileInput.files && el.fileInput.files[0]) onFile(el.fileInput.files[0]);
     });
     $('#vfRetry').addEventListener('click', function () { startCamera(state.facing); });
-    $('#vfSwap').addEventListener('click', function () { useDemo(state.demoIndex + 1); });
+    $('#vfSwap').addEventListener('click', function () {
+      state.demoChoice = true;
+      useDemo(state.demoIndex + 1);
+    });
 
     /* 灯箱 */
     el.lightbox.addEventListener('click', function (e) {
@@ -1070,14 +1076,6 @@
       if (act === 'save') saveCurrent();
       else if (act === 'del') deleteCurrent();
       else if (act === 'close') el.lightbox.close();
-      else if (act === 'redev') {
-        el.redevForm.hidden = !el.redevForm.hidden;
-        if (!el.redevForm.hidden) el.redevSelect.focus();
-      }
-    });
-    el.redevForm.addEventListener('submit', function (e) {
-      e.preventDefault();
-      redevelopCurrent(Number(el.redevSelect.value));
     });
 
     el.toastUndo.addEventListener('click', function () {
@@ -1089,6 +1087,7 @@
       var b = e.target.closest('.demo-load');
       if (!b) return;
       var i = Number(b.dataset.index);
+      state.demoChoice = true;
       useDemo(i);
       closeLab();
       toast('已装入示范底片「' + DEMOS[i].label + '」· 按快门冲洗');
@@ -1159,7 +1158,10 @@
     requestAnimationFrame(loop);
 
     startCamera(prefs.facing === 'user' ? 'user' : 'environment').then(function (ok) {
-      if (!ok) toast('镜头没能启动 · 先用示范底片拍几张试试');
+      if (!ok) {
+        toast('镜头没能启动 · 先用示范底片拍几张试试');
+        armCameraRetry();
+      }
     });
   }
 
