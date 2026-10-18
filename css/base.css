@@ -74,6 +74,11 @@
 
 * { box-sizing: border-box; }
 
+/* [hidden] 必须真的隐藏。作者样式里只要写了 display（.vf-notice 的 flex、.countdown 的 grid、
+   .peek img 的 block…），就会盖掉 UA 的 [hidden] { display: none }，于是「本该藏起来的东西」
+   一直挂在屏幕上——取景窗上那条「未连接镜头」就是这么来的 */
+[hidden] { display: none !important; }
+
 html, body { margin: 0; padding: 0; }
 
 body {
@@ -157,7 +162,8 @@ button, input, select { font: inherit; color: inherit; }
   }
 }
 
-/* 手机：整机锁成一屏，取景窗撑满剩余高度，页面不再上下滚动 */
+/* 手机：整机锁成一屏；取景框保持 135 胶卷的 3:2 横构图，让 CMOS 的横向像素都用上，
+   多出来的高度交给控制台，页面不再上下滚动 */
 @media (max-width: 999px) {
   html, body {
     height: 100vh;
@@ -168,7 +174,7 @@ button, input, select { font: inherit; color: inherit; }
   }
   .stage {
     height: 100%;
-    padding: 10px 12px calc(40px + env(safe-area-inset-bottom));
+    padding: 10px 12px calc(38px + env(safe-area-inset-bottom));
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -178,19 +184,79 @@ button, input, select { font: inherit; color: inherit; }
   .chassis { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   .chassis > .plate { flex: none; }
   .shell { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-  .shell > .chamber,
-  .shell > .deck { flex: none; }
-  .viewfinder { flex: 1 1 auto; min-height: 0; display: flex; }
-  .filmstrip { flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); }
-  /* 提高权重，盖过后面的 .frame { aspect-ratio: 3/2 } */
-  .filmstrip > .frame { aspect-ratio: auto; min-height: 88px; }
+  .shell > .chamber { flex: none; }
+  /* 横屏握持时：取景窗高度由 3:2 的取景框自己决定，控制台吃掉剩余空间 */
+  .viewfinder { flex: none; }
 }
 
-/* 极矮的横屏：回到可滚动，避免机身被裁掉 */
-@media (max-width: 999px) and (max-height: 520px) {
+/* 手机竖屏：取景框竖过来（3:4，贴合 CMOS 的 4:3 转 90°），并把取景框两侧原本空着的胶片边
+   做成功能键的竖排导轨——功能键从控制台里“抬”出来，省下的高度全给取景框，矮屏也看得见快门 */
+@media (max-width: 999px) and (orientation: portrait) {
+  :root { --rail: 44px; --perf-w: 12px; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: var(--rail) minmax(0, 1fr) var(--rail);
+    grid-template-rows: repeat(3, auto) auto auto auto;
+    column-gap: 6px;
+    align-content: space-between;
+  }
+  /* 提高权重：.deck / .fn-row 的 display 规则写在 css/ui.css，那边同权重会赢 */
+  .shell > .deck, .shell .fn-row { display: contents; }
+  /* 展平后成网格项，不再需要 .deck 的 padding 与 gap */
+
+  .viewfinder { grid-row: 1 / 4; grid-column: 2; }
+  .viewfinder > .filmstrip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
+  }
+  .filmstrip > .perf { flex: 0 0 var(--perf-w); align-self: stretch; }
+  .filmstrip > .frame {
+    flex: 0 1 auto;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3 / 4;
+  }
+
+  /* 六个功能键：左边三个、右边三个，竖着排在取景框两侧 */
+  .shell .fn { align-content: center; }
+  .shell .fn[data-act="flip"]   { grid-row: 1; grid-column: 1; }
+  .shell .fn[data-act="timer"]  { grid-row: 2; grid-column: 1; }
+  .shell .fn[data-act="grid"]   { grid-row: 3; grid-column: 1; }
+  .shell .fn[data-act="date"]   { grid-row: 1; grid-column: 3; }
+  .shell .fn[data-act="sound"]  { grid-row: 2; grid-column: 3; }
+  .shell .fn[data-act="import"] { grid-row: 3; grid-column: 3; }
+
+  .chamber { grid-row: 4; grid-column: 1 / -1; }
+  .shell .ev      { grid-row: 5; }
+  .shell .shutter { grid-row: 6; }
+  .shell .peek    { grid-row: 6; }
+
+  /* 控制台底板：deck 被展平后，用伪元素把面板画回来 */
+  .shell::after {
+    content: '';
+    grid-row: 5 / 7;
+    grid-column: 1 / -1;
+    border-radius: 18px;
+    background: linear-gradient(180deg, oklch(30% 0.008 72), oklch(22% 0.008 70));
+    box-shadow:
+      0 1px 0 oklch(100% 0 0 / 0.12) inset,
+      0 -2px 10px -8px oklch(0% 0 0 / 0.9) inset,
+      0 10px 24px -18px oklch(0% 0 0 / 0.9);
+  }
+  .shell .ev, .shell .shutter, .shell .peek { position: relative; z-index: 1; }
+  .shell .ev { margin: 12px 12px 0; }
+  .shell .shutter { margin-bottom: 14px; }
+  .shell .peek { margin: 0 12px 14px 0; }
+}
+
+/* 极矮的横屏 / 小屏：回到可滚动，避免机身被裁掉 */
+@media (max-width: 999px) and (max-height: 680px) {
   html, body { height: auto; min-height: 100vh; overflow: auto; }
   .stage { height: auto; }
-  .filmstrip > .frame { aspect-ratio: 3 / 2; }
 }
 
 /* ==========================================================================
@@ -508,9 +574,9 @@ button, input, select { font: inherit; color: inherit; }
 .vf-notice #vfNoticeText {
   flex: 1;
   min-width: 0;
+  line-height: 1.25;
+  /* 允许折行：镜头失败的原因可能是「手机只允许 HTTPS 调用镜头」这类长句 */
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .vf-notice .link {
   padding: 3px 7px;

@@ -215,55 +215,37 @@
   }
 
   /* ---------- 镜头 ---------- */
+  var camStart = null;   /* 同一时刻只允许一次镜头启动请求（手势重试与「重试」按钮可能同时触发） */
+
   function startCamera(facing) {
+    if (camStart) return camStart;
     stopCamera();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      useDemo(state.demoIndex, '浏览器不支持镜头调用');
+      /* 手机浏览器只在安全上下文（HTTPS / localhost）放行镜头 */
+      useDemo(state.demoIndex, window.isSecureContext ? '浏览器不支持镜头调用' : '手机只允许 HTTPS 调用镜头');
       return Promise.resolve(false);
     }
-    return navigator.mediaDevices.getUserMedia({
+    camStart = navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      /* 要 4:3（多数手机 CMOS 的原生比例），竖屏取景框就是它转 90°，几乎不用裁切 */
+      video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1440 } }
     }).then(function (stream) {
       state.stream = stream;
       state.facing = facing;
       state.mirror = facing === 'user';
       state.source = 'camera';
       state.live = true;
+      state.camErr = null;
+      state.demoChoice = false;
       el.video.srcObject = stream;
       el.video.style.display = 'block';
       el.still.hidden = true;
       setPressed('flip', state.facing === 'user');
-      try {
-        var p = el.video.play();
-        if (p && p.catch) p.catch(function () { /* 自动播放被拦下也无妨 */ });
-      } catch (e) { /* 个别内核对 play() 同步抛错，忽略 */ }
-
-      /* 等到真正出画再撤提示，避免「已授权但黑屏」时误报已连接 */
-      return new Promise(function (resolve) {
-        var settled = false;
-        var finish = function (ok) {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          el.video.removeEventListener('loadedmetadata', onMeta);
-          resolve(ok);
-        };
-        var onMeta = function () { finish(el.video.videoWidth > 0); };
-        var timer = setTimeout(function () { finish(el.video.videoWidth > 0); }, 4000);
-        if (el.video.videoWidth > 0) { finish(true); return; }
-        el.video.addEventListener('loadedmetadata', onMeta);
-      });
-    }).then(function (ready) {
-      if (ready) {
-        state.camErr = null;
-        state.demoChoice = false;
-        hideNotice();
-        layoutPreview();
-        return true;
-      }
-      useDemo(state.demoIndex, '镜头画面未能就绪');
-      return false;
+      hideNotice();
+      layoutPreview();
+      startVideo();
+      /* 拿到流就是连上了。画面出得慢不能反过来判定成「未连接」 */
+      return true;
     }).catch(function (err) {
       state.camErr = err && err.name ? err.name : 'UnknownError';
       var why = err && err.name === 'NotAllowedError' ? '镜头权限被拒绝'
@@ -272,28 +254,68 @@
         : '无法访问镜头';
       useDemo(state.demoIndex, why);
       return false;
-    });
+    }).then(function (v) { camStart = null; return v; },
+            function (e) { camStart = null; throw e; });
+    return camStart;
   }
 
-  /* 部分手机浏览器要求「用户手势」才放行摄像头，页面加载时的自动启动会被静默拒绝：
-     首次触碰页面时自动再试一次（权限被明确拒绝 / 无摄像头时除外） */
+  /* 连上镜头后画面可能还要缓一会儿（iPhone 上尤其明显）。出画了就把提示收干净；
+     迟迟不出画只给一句准确的说明，绝不退回示范底片——那正是「明明连上了却提示未连接」的来源 */
+  var videoTimer = null;
+  function startVideo() {
+    var v = el.video;
+    clearTimeout(videoTimer);
+    try {
+      var p = v.play();
+      if (p && p.catch) p.catch(function () { /* 自动播放被拦下也无妨 */ });
+    } catch (e) { /* 个别内核对 play() 同步抛错，忽略 */ }
+
+    var painted = function () {
+      if (state.source !== 'camera') return true;
+      if (v.videoWidth > 0) { clearTimeout(videoTimer); hideNotice(); return true; }
+      return false;
+    };
+    var onReady = function () {
+      if (painted()) {
+        v.removeEventListener('loadedmetadata', onReady);
+        v.removeEventListener('playing', onReady);
+      }
+    };
+    v.addEventListener('loadedmetadata', onReady);
+    v.addEventListener('playing', onReady);
+    videoTimer = setTimeout(function () {
+      if (painted()) return;
+      showNotice('镜头已连接，画面还在缓冲…一直黑屏就点「重试」或切一下前后摄');
+    }, 6000);
+  }
+
+  /* 手机浏览器（尤其 iOS Safari）要求摄像头调用发生在「用户手势」里，页面加载时的自动启动
+     会被静默拒绝。各家的错误名还不统一（NotAllowedError / NotFoundError / SecurityError 都见
+     过），所以任何失败都保留监听：用户一碰页面就立刻重试，最多补试 3 次，连上或改用示范底片
+     后自动摘除 */
   function armCameraRetry() {
     if (state.demoChoice) return;
-    if (state.camErr === 'NotAllowedError' || state.camErr === 'NotFoundError') return;
-    var retry = function () {
-      document.removeEventListener('pointerdown', retry);
-      document.removeEventListener('keydown', retry);
-      if (state.source === 'camera' || state.busy) return;
-      startCamera(state.facing);
+    var left = 3;
+    var detach = function () {
+      document.removeEventListener('pointerdown', onGesture);
+      document.removeEventListener('keydown', onGesture);
     };
-    document.addEventListener('pointerdown', retry);
-    document.addEventListener('keydown', retry);
+    var onGesture = function () {
+      if (state.demoChoice || state.source === 'camera') { detach(); return; }
+      if (state.busy) return;
+      if (left-- <= 0) { detach(); return; }
+      startCamera(state.facing).then(function (ok) { if (ok) detach(); });
+    };
+    document.addEventListener('pointerdown', onGesture);
+    document.addEventListener('keydown', onGesture);
   }
 
   function stopCamera() {
+    clearTimeout(videoTimer);
     if (state.stream) {
       state.stream.getTracks().forEach(function (t) { t.stop(); });
       state.stream = null;
+      if (state.source === 'camera') state.source = 'none';
     }
     state.live = false;
   }
@@ -310,6 +332,8 @@
     el.video.style.display = 'none';
     el.still.hidden = true;   /* 只当图源用，画面始终由画布输出 */
     el.still.onload = function () {
+      /* 示范底片图还没下载完，镜头却已经先连上了：不能反过来把它顶掉 */
+      if (state.source === 'camera') return;
       state.source = 'demo';
       state.dirty = true;
       if (!why) hideNotice();
@@ -558,7 +582,8 @@
   function makeThumb(canvas, w) {
     var c = document.createElement('canvas');
     c.width = w;
-    c.height = Math.round(w * 2 / 3);
+    /* 跟随成片实际比例：竖幅底片的缩略图不能再按 3:2 横构图裁 */
+    c.height = Math.max(1, Math.round(w * canvas.height / canvas.width));
     c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height);
     return toBlob(c, 0.72);
   }
@@ -690,7 +715,7 @@
         '<button class="shot-open" type="button" aria-label="查看第 ' + pad2(r.frameNo) + ' 张，' + r.code + '">' +
         '<span class="shot-film">' +
         '<span class="shot-perf top" aria-hidden="true"></span>' +
-        '<img src="' + url(r.thumb) + '" alt="" loading="lazy">' +
+        '<img src="' + url(r.thumb) + '" alt="" loading="lazy" style="aspect-ratio:' + r.w + '/' + r.h + '">' +
         '<span class="shot-perf bottom" aria-hidden="true"></span>' +
         '</span>' +
         '<span class="shot-meta"><b>' + pad2(r.frameNo) + '</b><span>' + r.code + '</span>' +
@@ -818,7 +843,10 @@
       el.toastUndo.hidden = true;
     }
     el.toast.hidden = false;
-    requestAnimationFrame(function () { el.toast.classList.add('show'); });
+    /* 显示与淡入分两帧：.toast 现在由 [hidden] 控制 display，先渲染出来再加 .show 才看得到过渡 */
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { el.toast.classList.add('show'); });
+    });
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () {
       el.toast.classList.remove('show');
@@ -1158,10 +1186,11 @@
     requestAnimationFrame(loop);
 
     startCamera(prefs.facing === 'user' ? 'user' : 'environment').then(function (ok) {
-      if (!ok) {
-        toast('镜头没能启动 · 先用示范底片拍几张试试');
-        armCameraRetry();
-      }
+      if (ok) return;
+      toast(window.isSecureContext
+        ? '镜头没能启动 · 先用示范底片拍几张试试'
+        : '手机浏览器只允许 HTTPS 调用镜头 · 先用示范底片试试');
+      armCameraRetry();
     });
   }
 

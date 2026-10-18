@@ -583,6 +583,7 @@
 .shot-film img {
   display: block;
   width: 100%;
+  /* 这里的 3/2 只是图未加载时的占位；每张底片会用自己的 w/h 覆盖（竖幅照片不再被裁头脚） */
   aspect-ratio: 3 / 2;
   object-fit: cover;
   background: oklch(10% 0.01 60);
@@ -799,7 +800,9 @@
 }
 .lb-film img {
   display: block;
-  width: 100%;
+  justify-self: center;
+  width: auto;
+  max-width: 100%;
   max-height: 62svh;
   object-fit: contain;
   background: oklch(8% 0.01 60);
@@ -882,12 +885,60 @@
   .toast { bottom: 24px; }
 }
 
+/* ---------- 手机控制台：EV 独占一行，不再和快门挤在同一列 ---------- */
+@media (max-width: 999px) {
+  .deck {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    flex: 1 1 auto;
+    min-height: 0;
+    align-content: space-evenly;
+  }
+  .fn-row { grid-column: 1 / -1; }
+  /* 展平成 .deck 的直接子项，让 EV / 快门 / 影集各自占到该有的行与列 */
+  .release { display: contents; }
+  .ev { grid-column: 1 / -1; justify-content: center; }
+  .ev-btn { width: 40px; height: 38px; }
+  .ev-read { min-width: 56px; }
+  .shutter { grid-column: 2; justify-self: center; }
+  .peek { grid-column: 3; justify-self: end; }
+}
+
+/* 矮屏：压缩控制台，保证快门与 EV 都在一屏内 */
+@media (max-width: 999px) and (max-height: 800px) {
+  .fn { min-height: 40px; padding: 5px 3px 4px; }
+  .fn-row { gap: 5px; }
+  .canister { min-height: 54px; }
+  .chamber { margin-top: 10px; }
+  .shutter { width: 74px; height: 74px; }
+  .shutter-core { width: 44px; height: 44px; }
+  .peek { width: 54px; height: 54px; }
+  .ev-btn { height: 34px; }
+  .deck { gap: 8px; padding: 10px 12px 12px; }
+}
+
+/* 再矮一档：把机身各处一起收紧，让 660～720 高的手机也能一屏装下 */
+@media (max-width: 999px) and (max-height: 720px) {
+  .plate { padding: 7px 12px; }
+  .rewind-cap, .roll-cap { width: 36px; height: 36px; }
+  .filmstrip { padding: 5px 0; }
+  .chamber { margin-top: 8px; }
+  .canister { min-height: 48px; padding-top: 6px; padding-bottom: 6px; }
+  .canister-code { font-size: 15px; }
+  .fn { min-height: 36px; }
+  .shutter { width: 70px; height: 70px; }
+  .shutter-core { width: 42px; height: 42px; }
+  .deck { gap: 7px; padding: 8px 12px 10px; }
+}
+
 /* ---------- 窄屏微调 ---------- */
 @media (max-width: 380px) {
   .chamber { gap: 8px; }
   .canister { padding-left: 16px; }
   .canister-name { display: none; }
-  .release { gap: 6px; }
+  .ev-btn { width: 34px; }
+  .ev-read { min-width: 48px; }
   .shutter { width: 74px; height: 74px; }
   .shutter-core { width: 44px; height: 44px; }
   .perf { width: 14px; }
