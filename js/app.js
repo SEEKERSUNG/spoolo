@@ -757,25 +757,33 @@
   /* ======================================================================
      影集
      ====================================================================== */
+  /* 删除先只改界面，6 秒后才真正写 IndexedDB。
+     Safari 对「删除后再把同一个 Blob 写回」不稳定，软删除避免缩略图丢失 */
+  var pendingDeletes = Object.create(null);
+
+  function paintAlbum(rows) {
+    state.shots = rows;
+    renderFrames(rows);
+    $('#albumBadge').textContent = String(rows.length);
+    el.negatives.hidden = rows.length > 0;
+    if (!rows.length) {
+      el.albumStat.textContent = '还没有冲洗出照片';
+    } else {
+      var rolls = 1 + Math.max.apply(null, rows.map(function (r) { return r.roll; })) - Math.min.apply(null, rows.map(function (r) { return r.roll; }));
+      el.albumStat.textContent = '共 ' + rows.length + ' 张 · ' + rolls + ' 卷';
+    }
+    if (rows.length) {
+      setPeek(rows[0]);
+    } else {
+      el.peekImg.hidden = true;
+      el.peekEmpty.hidden = false;
+    }
+  }
+
   function refreshAlbum() {
     return Store.all().then(function (rows) {
-      state.shots = rows;
-      renderFrames(rows);
-      var badge = String(rows.length);
-      $('#albumBadge').textContent = badge;
-      el.negatives.hidden = rows.length > 0;
-      if (!rows.length) {
-        el.albumStat.textContent = '还没有冲洗出照片';
-      } else {
-        var rolls = 1 + Math.max.apply(null, rows.map(function (r) { return r.roll; })) - Math.min.apply(null, rows.map(function (r) { return r.roll; }));
-        el.albumStat.textContent = '共 ' + rows.length + ' 张 · ' + rolls + ' 卷';
-      }
-      if (rows.length) {
-        setPeek(rows[0]);
-      } else {
-        el.peekImg.hidden = true;
-        el.peekEmpty.hidden = false;
-      }
+      rows = rows.filter(function (r) { return !pendingDeletes[r.id]; });
+      paintAlbum(rows);
     });
   }
 
@@ -882,12 +890,30 @@
   function deleteCurrent() {
     var row = state.current;
     if (!row) return;
-    Store.remove(row.id).then(function () {
-      el.lightbox.close();
-      refreshAlbum();
-      toast('已删除 ' + row.code + ' #' + pad2(row.frameNo), '撤销', function () {
-        Store.add(row).then(refreshAlbum);
+    el.lightbox.close();
+
+    /* 先把这一张从界面拿掉，撤销窗口结束后再真正删库 */
+    paintAlbum(state.shots.filter(function (r) { return r.id !== row.id; }));
+
+    var timer = setTimeout(function () {
+      Store.remove(row.id).then(function () {
+        delete pendingDeletes[row.id];
+      }).catch(function () {
+        delete pendingDeletes[row.id];
+        refreshAlbum();
       });
+    }, 6000);
+    pendingDeletes[row.id] = { row: row, timer: timer };
+
+    toast('已删除 ' + row.code + ' #' + pad2(row.frameNo), '撤销', function () {
+      var pending = pendingDeletes[row.id];
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      delete pendingDeletes[row.id];
+      var rows = state.shots.slice();
+      rows.push(row);
+      rows.sort(function (a, b) { return b.ts - a.ts; });
+      paintAlbum(rows);
     });
   }
 
