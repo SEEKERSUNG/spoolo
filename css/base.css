@@ -180,6 +180,36 @@ button, input, select { font: inherit; color: inherit; }
   }
 }
 
+/* ---------- 页脚署名 ---------- */
+.colophon {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 14px 20px calc(104px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 18px;
+  border-top: 1px solid oklch(100% 0 0 / 0.08);
+  font: 400 10.5px/1.7 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--txt-3);
+}
+.colophon p { margin: 0; }
+.colophon .ver span { margin: 0 7px; color: oklch(100% 0 0 / 0.22); }
+.colophon .ver b { font-weight: 600; color: var(--amber); }
+.colophon a {
+  color: var(--txt-2);
+  text-decoration: none;
+  padding-bottom: 1px;
+  border-bottom: 1px solid oklch(100% 0 0 / 0.16);
+  transition: color 160ms var(--ease-out), border-color 160ms var(--ease-out);
+}
+.colophon a:hover { color: var(--amber); border-color: oklch(80% 0.16 68 / 0.55); }
+@media (min-width: 1000px) {
+  .colophon { padding-bottom: 64px; }
+}
+
 /* ==========================================================================
    机身
    ========================================================================== */
