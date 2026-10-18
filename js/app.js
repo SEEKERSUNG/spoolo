@@ -500,39 +500,76 @@
     return sceneLuma() < 0.42;
   }
 
+  /* 只有部分浏览器（多为 Android Chrome）开放 torch；iOS Safari 不支持 */
+  function torchTrack() {
+    if (!state.stream) return null;
+    var tracks = state.stream.getVideoTracks ? state.stream.getVideoTracks() : [];
+    var track = tracks && tracks[0];
+    if (!track || !track.getCapabilities) return null;
+    try {
+      var caps = track.getCapabilities();
+      return caps && caps.torch ? track : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setTorch(track, on) {
+    if (!track || !track.applyConstraints) return Promise.resolve(false);
+    return track.applyConstraints({ advanced: [{ torch: !!on }] })
+      .then(function () { return true; })
+      .catch(function () { return false; });
+  }
+
   function captureShot() {
     if (state.busy) return;
     state.busy = true;
     var film = currentFilm();
     var flash = flashShouldFire();
 
-    if (flash) {
-      fireFlash();
-      /* 先让整屏闪白真正绘制出来，也顺便给镜头一点补光时间 */
-      setTimeout(function () { takeShot(film, true); }, 120);
-    } else {
-      takeShot(film, false);
+    if (!flash) { takeShot(film, ''); return; }
+
+    var track = torchTrack();
+    if (track) {
+      setTorch(track, true).then(function (ok) {
+        if (ok) {
+          /* 给 LED 一点时间把画面照亮 */
+          setTimeout(function () { takeShot(film, 'torch', track); }, 180);
+        } else {
+          fireFlash();
+          setTimeout(function () { takeShot(film, 'screen'); }, 120);
+        }
+      });
+      return;
     }
+
+    /* 没有硬件 torch：整屏闪白补光 */
+    fireFlash();
+    setTimeout(function () { takeShot(film, 'screen'); }, 120);
   }
 
-  function takeShot(film, flash) {
+  function takeShot(film, flashKind, torch) {
     var shot;
     fireShutter();
     try {
       shot = grabFrame();
     } catch (e) {
+      if (torch) setTorch(torch, false);
       state.busy = false;
       toast('这一帧没能拍下来，请重试');
       return;
     }
+    if (torch) setTorch(torch, false);
 
     var evStops = state.ev / 3;
     var seed = (Math.random() * 100000) | 0;
+    /* 硬件 LED 已经补过光，成片里只留一点暖调；屏幕补光保留完整模拟 */
+    var flashAmt = flashKind === 'torch' ? 0.35 : flashKind === 'screen' ? 1 : 0;
 
     openProcessing(film, function () {
       develop(shot.canvas, shot.W, shot.H, film, {
         ev: evStops, halation: true, grain: true, vignette: true, leak: true,
-        seed: seed, dateStamp: prefs.date, flash: flash ? 1 : 0
+        seed: seed, dateStamp: prefs.date, flash: flashAmt
       });
       return toBlob(shot.canvas, 0.92).then(function (blob) {
         return makeThumb(shot.canvas, 240).then(function (thumb) {
@@ -545,7 +582,8 @@
             en: film.en,
             iso: film.iso,
             ev: evStops,
-            flash: flash ? 1 : 0,
+            flash: flashKind ? 1 : 0,
+            flashKind: flashKind,
             w: shot.W,
             h: shot.H,
             date: prefs.date,
@@ -790,7 +828,7 @@
       '<dt>卷 / 张</dt><dd>ROLL ' + pad2(row.roll) + ' · #' + pad2(row.frameNo) + '</dd>' +
       '<dt>乳剂</dt><dd>' + row.code + ' · ISO ' + row.iso + '</dd>' +
       '<dt>曝光补偿</dt><dd>' + fmtEv(row.ev) + ' EV</dd>' +
-      '<dt>闪光</dt><dd>' + (row.flash ? '已触发' : '未触发') + '</dd>' +
+      '<dt>闪光</dt><dd>' + (row.flash ? (row.flashKind === 'torch' ? '已触发（LED）' : '已触发（屏幕）') : '未触发') + '</dd>' +
       '<dt>冲印时间</dt><dd>' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
       ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</dd>' +
       '<dt>尺寸</dt><dd>' + row.w + ' × ' + row.h + '</dd>' +
@@ -1062,7 +1100,9 @@
         prefs.flash = (prefs.flash + 1) % 3;
         savePrefs();
         updateFlashUi();
-        toast(['闪光灯已关闭', '闪光灯：自动（暗光时触发）', '闪光灯：强制开启'][prefs.flash]);
+        var flashMsg = ['闪光灯已关闭', '闪光灯：自动（暗光时触发）', '闪光灯：强制开启'][prefs.flash];
+        if (prefs.flash > 0 && !torchTrack()) flashMsg += ' · 屏幕补光';
+        toast(flashMsg);
       } else if (act === 'grid') {
         prefs.grid = !prefs.grid;
         savePrefs();
