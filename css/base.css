@@ -1,0 +1,577 @@
+/* ==========================================================================
+   SPOOLO · base — 设计令牌 / 排版 / 机身材料
+   ========================================================================== */
+
+:root {
+  /* 机身金属 */
+  --alu-1: oklch(90% 0.008 92);
+  --alu-2: oklch(82% 0.008 90);
+  --alu-3: oklch(68% 0.010 86);
+  --alu-4: oklch(52% 0.010 82);
+  --chrome-1: oklch(96% 0.004 100);
+  --chrome-2: oklch(84% 0.006 96);
+  --chrome-3: oklch(58% 0.010 88);
+  --chrome-4: oklch(38% 0.010 82);
+
+  /* 蒙皮与底片 */
+  --leather: oklch(23% 0.006 60);
+  --leather-2: oklch(19% 0.006 60);
+  --leather-3: oklch(15% 0.006 60);
+  --film-base: oklch(28% 0.014 45);
+  --film-hole: oklch(72% 0.020 80 / 0.28);
+
+  /* 纸张（暗房标签） */
+  --paper: oklch(92% 0.020 84);
+  --paper-2: oklch(84% 0.024 80);
+  --paper-ink: oklch(32% 0.030 60);
+
+  /* 强调 */
+  --amber: oklch(80% 0.16 68);
+  --amber-deep: oklch(52% 0.14 58);
+  --red: oklch(56% 0.17 30);
+  --red-deep: oklch(42% 0.15 30);
+  --green: oklch(62% 0.12 150);
+
+  /* 界面 */
+  --bg: oklch(17% 0.010 70);
+  --bg-2: oklch(22% 0.010 70);
+  --bg-3: oklch(27% 0.010 70);
+  --line: oklch(38% 0.010 70);
+  --txt: oklch(93% 0.012 86);
+  --txt-2: oklch(77% 0.014 82);
+  --txt-3: oklch(62% 0.014 82);
+  --focus: oklch(80% 0.14 235);
+
+  /* 字体 */
+  --font-display: 'Oswald', 'Archivo Narrow', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+
+  /* 尺度 */
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.75rem;
+  --step-3: 2.5rem;
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-io: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* 层 */
+  --z-dropdown: 100;
+  --z-scrim: 300;
+  --z-sheet: 320;
+  --z-modal: 400;
+  --z-toast: 500;
+
+  /* 取景器状态（由 JS 写入） */
+  --vig: 0.2;
+  --leak: 0;
+  --grain: 0.05;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  min-height: 100svh;
+  font: 400 var(--step-0) / 1.6 var(--font-sans);
+  color: var(--txt);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+h1, h2, h3, p, ul, ol, dl, dd, figure { margin: 0; }
+ul, ol { list-style: none; padding: 0; }
+
+button, input, select { font: inherit; color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.engrave {
+  font: 500 9px/1 var(--font-display);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: oklch(82% 0.012 88 / 0.55);
+  text-shadow: 0 1px 0 oklch(100% 0 0 / 0.35);
+}
+
+.skip {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 999;
+  transform: translateY(-200%);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--paper-ink);
+  font-size: var(--step--1);
+  text-decoration: none;
+}
+.skip:focus { transform: none; }
+
+/* 房间：一层很淡的顶光与暗角，像把相机放在桌上 */
+.room {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(120% 80% at 50% -10%, oklch(34% 0.020 80 / 0.9) 0%, transparent 60%),
+    radial-gradient(80% 60% at 50% 110%, oklch(12% 0.010 60) 0%, transparent 70%),
+    linear-gradient(180deg, var(--bg-2), var(--bg) 40%, oklch(14% 0.010 70));
+}
+.room::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(oklch(100% 0 0 / 0.035) 0.5px, transparent 0.6px);
+  background-size: 3px 3px;
+  opacity: 0.6;
+}
+
+/* ---------- 抬头 ---------- */
+.masthead {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 32px 20px 8px;
+}
+.kicker {
+  font: 500 12px/1 var(--font-display);
+  letter-spacing: 0.34em;
+  color: var(--amber);
+}
+.kicker span { margin: 0 6px; color: var(--txt-3); }
+.masthead h1 {
+  margin: 14px 0 10px;
+  font: 300 clamp(1.9rem, 7vw, 2.9rem) / 1.08 var(--font-display);
+  letter-spacing: 0.01em;
+}
+.lede {
+  max-width: 46ch;
+  color: var(--txt-2);
+  font-size: var(--step--1);
+}
+
+/* ---------- 布局 ---------- */
+.stage {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px 16px calc(104px + env(safe-area-inset-bottom));
+  display: grid;
+  gap: 24px;
+  align-items: start;
+}
+@media (min-width: 1000px) {
+  .stage {
+    grid-template-columns: minmax(0, 428px) minmax(0, 1fr);
+    gap: 36px;
+    padding-bottom: 64px;
+  }
+}
+
+/* ==========================================================================
+   机身
+   ========================================================================== */
+.camera { max-width: 428px; margin: 0 auto; width: 100%; }
+
+.chassis {
+  position: relative;
+  border-radius: 26px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--leather);
+  box-shadow:
+    0 1px 0 oklch(100% 0 0 / 0.08) inset,
+    0 -1px 0 oklch(0% 0 0 / 0.6) inset,
+    0 40px 70px -34px oklch(0% 0 0 / 0.9),
+    0 8px 20px -12px oklch(0% 0 0 / 0.8);
+}
+.chassis::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.09);
+}
+
+/* 顶盖：拉丝铝 */
+.plate {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 10px 12px;
+  background: linear-gradient(180deg, var(--alu-1) 0%, var(--alu-2) 42%, var(--alu-3) 100%);
+  box-shadow:
+    0 1px 0 oklch(100% 0 0 / 0.8) inset,
+    0 -1px 0 oklch(30% 0.01 80 / 0.45) inset,
+    0 6px 14px -8px oklch(0% 0 0 / 0.7);
+}
+.plate::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(90deg,
+    oklch(100% 0 0 / 0.16) 0 1px,
+    transparent 1px 3px);
+  opacity: 0.5;
+  mix-blend-mode: soft-light;
+}
+.plate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 9px 50%, oklch(30% 0.01 80 / 0.5) 0 1.6px, transparent 2.2px),
+    radial-gradient(circle at calc(100% - 9px) 50%, oklch(30% 0.01 80 / 0.5) 0 1.6px, transparent 2.2px);
+}
+
+.maker {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+}
+.maker-name {
+  font: 600 15px/1 var(--font-display);
+  letter-spacing: 0.3em;
+  color: oklch(38% 0.014 70);
+  text-shadow: 0 1px 0 oklch(100% 0 0 / 0.55), 0 -1px 0 oklch(0% 0 0 / 0.18);
+}
+.maker-sub {
+  font: 400 8px/1 var(--font-mono);
+  letter-spacing: 0.16em;
+  color: oklch(44% 0.012 76 / 0.85);
+  text-shadow: 0 1px 0 oklch(100% 0 0 / 0.4);
+}
+
+/* 计数窗：琥珀色 LED */
+.counter {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 0 3px;
+  padding: 4px 8px 3px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, oklch(16% 0.02 60), oklch(10% 0.02 60));
+  box-shadow:
+    0 1px 0 oklch(100% 0 0 / 0.45),
+    inset 0 2px 6px oklch(0% 0 0 / 0.9),
+    inset 0 0 0 1px oklch(0% 0 0 / 0.6);
+}
+.counter-digits {
+  font: 500 17px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--amber);
+  text-shadow: 0 0 6px oklch(80% 0.16 68 / 0.55);
+}
+.counter-sub {
+  font: 400 8px/1 var(--font-mono);
+  color: oklch(70% 0.10 68 / 0.75);
+}
+.counter-roll {
+  grid-column: 1 / -1;
+  font: 400 8px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: oklch(64% 0.08 68 / 0.7);
+}
+
+/* 机身蒙皮 */
+.shell {
+  position: relative;
+  padding: 12px 12px 14px;
+  background: linear-gradient(180deg, oklch(26% 0.006 62), var(--leather-2) 55%, var(--leather-3));
+}
+.shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.42;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='120' height='120' filter='url(%23p)' opacity='0.6'/></svg>");
+  background-size: 120px 120px;
+}
+.shell > * { position: relative; z-index: 1; }
+
+/* ---------- 取景器（一段底片） ---------- */
+.viewfinder {
+  position: relative;
+  border-radius: 14px;
+  padding: 0;
+  background: oklch(12% 0.014 50);
+  box-shadow:
+    0 1px 0 oklch(100% 0 0 / 0.12),
+    inset 0 0 0 1px oklch(0% 0 0 / 0.75),
+    0 10px 20px -14px oklch(0% 0 0 / 0.9);
+}
+.filmstrip {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  padding: 7px 0;
+  border-radius: 13px;
+  overflow: hidden;
+}
+
+.perf {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--film-base);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='18'><rect x='2.4' y='4' width='7.2' height='10' rx='2.4' fill='oklch(76%25 0.02 80)' opacity='0.26'/></svg>");
+  background-repeat: repeat-y;
+  background-position: center 0;
+  background-size: 12px 18px;
+}
+.perf.left { box-shadow: inset -2px 0 4px -2px oklch(0% 0 0 / 0.9); }
+.perf.right { box-shadow: inset 2px 0 4px -2px oklch(0% 0 0 / 0.9); }
+.perf.left .edge-code { transform: translate(-50%, -50%) rotate(-90deg); }
+.perf.right .edge-code { transform: translate(-50%, -50%) rotate(90deg); }
+.edge-code {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  font: 400 7px/1 var(--font-mono);
+  letter-spacing: 0.2em;
+  color: oklch(85% 0.03 80 / 0.42);
+  white-space: nowrap;
+}
+
+.frame {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+  border-radius: 2px;
+  background: oklch(6% 0.006 60);
+  box-shadow: inset 0 0 30px oklch(0% 0 0 / 0.9);
+}
+
+#cam, #preview, #still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+#still { object-position: center; }
+.frame.is-mirrored #cam,
+.frame.is-mirrored #preview,
+.frame.is-mirrored #still { transform: scaleX(-1); }
+
+.fx { position: absolute; inset: 0; pointer-events: none; }
+.fx.vignette {
+  background: radial-gradient(ellipse 78% 78% at 50% 48%,
+    transparent 44%, oklch(0% 0 0 / var(--vig)) 100%);
+}
+.fx.leak {
+  background: linear-gradient(90deg,
+    oklch(70% 0.19 55 / var(--leak)) 0%, transparent 62%);
+  mix-blend-mode: screen;
+}
+.fx.grain {
+  opacity: var(--grain);
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='200' height='200' filter='url(%23g)'/></svg>");
+  background-size: 200px 200px;
+  animation: grain-drift 1.4s steps(5, end) infinite;
+}
+@keyframes grain-drift {
+  0%   { transform: translate3d(0, 0, 0); }
+  20%  { transform: translate3d(-3%, 2%, 0); }
+  40%  { transform: translate3d(2%, -3%, 0); }
+  60%  { transform: translate3d(-2%, -2%, 0); }
+  80%  { transform: translate3d(3%, 1%, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+.fx.glass {
+  background:
+    linear-gradient(155deg, oklch(100% 0 0 / 0.09) 0%, transparent 34%),
+    radial-gradient(60% 40% at 20% 12%, oklch(100% 0 0 / 0.05), transparent 70%);
+}
+
+/* 取景标记 */
+.marks { position: absolute; inset: 0; pointer-events: none; }
+.brk {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 0 solid oklch(100% 0 0 / 0.42);
+}
+.brk.tl { top: 12px; left: 12px; border-top-width: 1px; border-left-width: 1px; }
+.brk.tr { top: 12px; right: 12px; border-top-width: 1px; border-right-width: 1px; }
+.brk.bl { bottom: 12px; left: 12px; border-bottom-width: 1px; border-left-width: 1px; }
+.brk.br { bottom: 12px; right: 12px; border-bottom-width: 1px; border-right-width: 1px; }
+.thirds {
+  position: absolute;
+  inset: 0;
+  display: none;
+  background-image:
+    linear-gradient(90deg, transparent 33.1%, oklch(100% 0 0 / 0.22) 33.2%, transparent 33.4%,
+      transparent 66.6%, oklch(100% 0 0 / 0.22) 66.7%, transparent 66.9%),
+    linear-gradient(0deg, transparent 33.1%, oklch(100% 0 0 / 0.22) 33.2%, transparent 33.4%,
+      transparent 66.6%, oklch(100% 0 0 / 0.22) 66.7%, transparent 66.9%);
+}
+.frame.show-grid .thirds { display: block; }
+.crosshair {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 18px; height: 18px;
+  margin: -9px 0 0 -9px;
+  border: 1px solid oklch(100% 0 0 / 0.3);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px oklch(0% 0 0 / 0.12);
+}
+.crosshair::before, .crosshair::after {
+  content: '';
+  position: absolute;
+  background: oklch(100% 0 0 / 0.42);
+}
+.crosshair::before { left: 50%; top: -6px; width: 1px; height: 4px; }
+.crosshair::after { top: 50%; left: -6px; height: 1px; width: 4px; }
+
+/* 读数 */
+.readouts {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font: 400 10px/1.4 var(--font-mono);
+  color: oklch(96% 0.01 90 / 0.92);
+  text-shadow: 0 1px 3px oklch(0% 0 0 / 0.95), 0 0 10px oklch(0% 0 0 / 0.7);
+}
+.ro {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+}
+.ro.left { top: 11px; left: 11px; }
+.ro.right { bottom: 11px; right: 11px; }
+.ro b { font-weight: 500; }
+.ro-chip {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: oklch(0% 0 0 / 0.55);
+  border: 1px solid oklch(100% 0 0 / 0.14);
+  color: var(--amber);
+  letter-spacing: 0.06em;
+}
+
+/* 提示条 */
+.vf-notice {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  right: 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: var(--paper);
+  background: oklch(10% 0.02 60 / 0.8);
+  box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.12);
+  backdrop-filter: blur(3px);
+}
+.vf-notice #vfNoticeText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vf-notice .link {
+  padding: 3px 7px;
+  border: 1px solid oklch(100% 0 0 / 0.24);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--paper);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.vf-notice .link:hover { background: oklch(100% 0 0 / 0.12); }
+
+/* 快门瞬间 */
+.blackout {
+  position: absolute;
+  inset: 0;
+  background: oklch(0% 0 0);
+  opacity: 0;
+  pointer-events: none;
+}
+.frame.firing .blackout { animation: blackout 260ms var(--ease-out) both; }
+@keyframes blackout {
+  0% { opacity: 0; }
+  14% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.countdown {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font: 300 clamp(3rem, 18vw, 5rem) / 1 var(--font-display);
+  color: oklch(98% 0.01 90);
+  text-shadow: 0 4px 30px oklch(0% 0 0 / 0.9);
+  background: oklch(0% 0 0 / 0.28);
+}
+
+/* ---------- 胶片仓 ---------- */
+.chamber {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+/* ---------- 控制台 ---------- */
+.deck {
+  margin-top: 14px;
+  padding: 12px 12px 14px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, oklch(30% 0.008 72), oklch(22% 0.008 70));
+  box-shadow:
+    0 1px 0 oklch(100% 0 0 / 0.12) inset,
+    0 -2px 10px -8px oklch(0% 0 0 / 0.9) inset,
+    0 10px 24px -18px oklch(0% 0 0 / 0.9);
+}
+.fn-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.release {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx.grain { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

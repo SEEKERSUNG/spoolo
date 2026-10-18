@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17140f">
+<title>SPOOLO · 一台网页里的胶片相机</title>
+<meta name="description" content="SPOOLO 是一台跑在浏览器里的 135 胶片相机：实时仿色胶卷、机械快门手感、颗粒与光晕、暗房冲印。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/ui.css">
+</head>
+<body>
+<div class="room" aria-hidden="true"></div>
+
+<a class="skip" href="#deck">跳到相机操作区</a>
+
+<header class="masthead">
+  <p class="kicker">SPOOLO<span>·</span>135</p>
+  <h1>一台网页里的胶片相机</h1>
+  <p class="lede">十种仿色乳剂代号、实时取景、机械快门手感，还有一间可以反复冲印的暗房。</p>
+</header>
+
+<main class="stage">
+  <!-- ======================= 机身 ======================= -->
+  <section class="camera" aria-label="SPOOLO 胶片相机机身">
+    <div class="chassis">
+
+      <!-- 顶盖 -->
+      <div class="plate">
+        <button class="rewind" id="rewind" type="button" aria-label="回卷旋钮，长按可换卷">
+          <span class="rewind-cap" aria-hidden="true"><i></i></span>
+          <span class="engrave">REWIND</span>
+        </button>
+
+        <div class="maker">
+          <span class="maker-name">SPOOLO</span>
+          <span class="maker-sub">135 FORMAT · MODEL 35S</span>
+        </div>
+
+        <div class="counter" role="status" aria-live="off">
+          <span class="counter-digits" id="counterDigits">01</span>
+          <span class="counter-sub">/&nbsp;36 EXP</span>
+          <span class="counter-roll">ROLL <b id="rollNo">01</b></span>
+        </div>
+      </div>
+
+      <!-- 机身 -->
+      <div class="shell">
+        <div class="viewfinder" id="viewfinder">
+          <div class="filmstrip">
+            <div class="perf left" aria-hidden="true"><span class="edge-code">SPOOLO 135 · 400 · 01</span></div>
+
+            <div class="frame" id="frameBox">
+              <video id="cam" playsinline muted autoplay></video>
+              <canvas id="preview" aria-hidden="true"></canvas>
+              <img id="still" alt="" aria-hidden="true" hidden>
+
+              <div class="fx vignette" aria-hidden="true"></div>
+              <div class="fx leak" aria-hidden="true"></div>
+              <div class="fx grain" aria-hidden="true"></div>
+              <div class="fx glass" aria-hidden="true"></div>
+
+              <div class="marks" id="marks" aria-hidden="true">
+                <span class="brk tl"></span><span class="brk tr"></span>
+                <span class="brk bl"></span><span class="brk br"></span>
+                <span class="thirds"></span>
+                <span class="crosshair"></span>
+              </div>
+
+              <div class="readouts">
+                <p class="ro left">
+                  <span class="ro-chip" id="roCode">PT-400</span>
+                  <span>ISO <b id="roIso">400</b></span>
+                  <span>EV <b id="roEv">0</b></span>
+                </p>
+                <p class="ro right"><b id="roLeft">36</b> 张剩余</p>
+              </div>
+
+              <p class="vf-notice" id="vfNotice" hidden>
+                <span id="vfNoticeText">未连接镜头</span>
+                <button type="button" class="link" id="vfRetry">重试</button>
+                <button type="button" class="link" id="vfSwap">换一张示范底片</button>
+              </p>
+
+              <div class="countdown" id="countdown" hidden aria-hidden="true"></div>
+              <div class="blackout" id="blackout" aria-hidden="true"></div>
+            </div>
+
+            <div class="perf right" aria-hidden="true"><span class="edge-code">01 → SPOOLO 400</span></div>
+          </div>
+        </div>
+
+        <!-- 胶片仓 -->
+        <div class="chamber">
+          <div class="roll-knob" id="rollKnob" role="slider" tabindex="0"
+               aria-label="选择胶卷" aria-valuemin="1" aria-valuemax="10" aria-valuenow="1"
+               aria-valuetext="PT-400 暖肤人像">
+            <span class="roll-cap" aria-hidden="true"><i></i></span>
+            <span class="roll-ticks" aria-hidden="true"></span>
+            <span class="engrave">FILM</span>
+          </div>
+
+          <div class="canister" id="canister">
+            <span class="canister-swatch" id="canSwatch" aria-hidden="true"></span>
+            <span class="canister-body">
+              <span class="canister-code" id="canCode">PT-400</span>
+              <span class="canister-name" id="canName">暖肤人像</span>
+              <span class="canister-meta" id="canMeta">C-41 · ISO 400</span>
+            </span>
+            <span class="canister-bars" id="canBars" aria-hidden="true"></span>
+          </div>
+
+          <button class="chip" id="openFilms" type="button" aria-haspopup="dialog" aria-controls="lab">
+            胶卷库<span class="chip-count" id="filmCount">10</span>
+          </button>
+        </div>
+
+        <!-- 控制台 -->
+        <div class="deck" id="deck">
+          <div class="fn-row" id="fnRow">
+            <button class="fn" type="button" data-act="flip" aria-pressed="false"><span class="led"></span>镜头</button>
+            <button class="fn" type="button" data-act="timer" aria-pressed="false"><span class="led"></span>定时<b class="fn-val" id="timerVal">关</b></button>
+            <button class="fn" type="button" data-act="grid" aria-pressed="true"><span class="led"></span>网格</button>
+            <button class="fn" type="button" data-act="date" aria-pressed="false"><span class="led"></span>日期</button>
+            <button class="fn" type="button" data-act="sound" aria-pressed="true"><span class="led"></span>快门声</button>
+            <button class="fn" type="button" data-act="import" aria-pressed="false"><span class="led"></span>导入底片</button>
+          </div>
+
+          <div class="release">
+            <div class="ev" role="group" aria-label="曝光补偿">
+              <button class="ev-btn" type="button" data-ev="-1" aria-label="减少曝光补偿">−</button>
+              <div class="ev-read">
+                <span class="engrave">EV</span>
+                <span class="ev-value" id="evValue">0</span>
+              </div>
+              <button class="ev-btn" type="button" data-ev="1" aria-label="增加曝光补偿">+</button>
+            </div>
+
+            <button class="shutter" id="shutter" type="button" aria-label="按下快门拍摄">
+              <span class="shutter-ring" aria-hidden="true"></span>
+              <span class="shutter-core" aria-hidden="true"></span>
+            </button>
+
+            <button class="peek" id="peek" type="button" aria-label="打开影集查看上一张">
+              <img id="peekImg" alt="" hidden>
+              <span class="peek-empty" id="peekEmpty" aria-hidden="true">空<br>卷</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= 暗房 / 胶卷库 ======================= -->
+  <aside class="lab" id="lab" aria-label="胶卷库与影集">
+    <div class="sheet-head">
+      <span class="sheet-grip" aria-hidden="true"></span>
+      <span class="sheet-title">暗房台</span>
+      <button class="sheet-close" id="sheetClose" type="button" aria-label="收起暗房台">收起</button>
+    </div>
+
+    <div class="lab-tabs" role="tablist" aria-label="暗房分类">
+      <button class="lab-tab" id="tabFilms" type="button" role="tab" aria-selected="true" aria-controls="panelFilms">胶卷库</button>
+      <button class="lab-tab" id="tabAlbum" type="button" role="tab" aria-selected="false" aria-controls="panelAlbum">影集<b class="badge" id="albumBadge">0</b></button>
+    </div>
+
+    <div class="panel" id="panelFilms" role="tabpanel" aria-labelledby="tabFilms" tabindex="0">
+      <p class="panel-note">十种乳剂代号，仿色自经典胶片。换卷即刻生效。</p>
+      <ul class="film-list" id="filmList"></ul>
+    </div>
+
+    <div class="panel" id="panelAlbum" role="tabpanel" aria-labelledby="tabAlbum" tabindex="0" hidden>
+      <div class="album-head">
+        <p class="album-stat" id="albumStat">还没有冲洗出照片</p>
+        <button class="chip" id="albumImport" type="button">导入底片</button>
+      </div>
+      <div class="negatives" id="negatives">
+        <p class="panel-note">没有镜头也能玩：先拿示范底片练手。</p>
+        <ul class="demo-list" id="demoList"></ul>
+      </div>
+      <ul class="frames" id="frames"></ul>
+    </div>
+  </aside>
+</main>
+
+<nav class="tabbar" aria-label="打开暗房台">
+  <button type="button" data-open="films">胶卷库<span class="chip-count" id="filmCount2">10</span></button>
+  <button type="button" data-open="album">影集<span class="chip-count" id="albumBadge2">0</span></button>
+</nav>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<!-- 冲印中 -->
+<div class="processing" id="processing" hidden role="status" aria-live="polite">
+  <div class="proc-card">
+    <p class="proc-title" id="procTitle">C-41 冲印中</p>
+    <ol class="proc-steps">
+      <li data-step="0">曝光</li><li data-step="1">显影</li><li data-step="2">定影</li><li data-step="3">干燥</li>
+    </ol>
+    <div class="proc-bar"><i id="procBar"></i></div>
+    <p class="proc-note" id="procNote">正在按乳剂曲线还原色彩…</p>
+  </div>
+</div>
+
+<!-- 单张查看 -->
+<dialog class="lightbox" id="lightbox" aria-label="查看照片">
+  <div class="lb-stage">
+    <div class="lb-film">
+      <span class="perf left" aria-hidden="true"></span>
+      <img id="lbImage" alt="">
+      <span class="perf right" aria-hidden="true"></span>
+    </div>
+  </div>
+  <div class="lb-side">
+    <p class="lb-code" id="lbCode">PT-400</p>
+    <p class="lb-name" id="lbName">暖肤人像</p>
+    <dl class="lb-meta" id="lbMeta"></dl>
+    <div class="lb-actions">
+      <button class="btn primary" type="button" data-act="save">保存到本地</button>
+      <button class="btn" type="button" data-act="redev">换胶卷重冲</button>
+      <button class="btn danger" type="button" data-act="del">删除</button>
+    </div>
+    <form class="lb-redev" id="redevForm" hidden>
+      <label for="redevSelect">用另一卷冲印</label>
+      <select id="redevSelect"></select>
+      <button class="btn primary" type="submit">开始冲印</button>
+    </form>
+    <button class="btn ghost" type="button" data-act="close">关闭</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden>
+  <span id="toastText">已删除</span>
+  <button type="button" id="toastUndo" hidden>撤销</button>
+</div>
+
+<input type="file" id="fileInput" accept="image/*" hidden>
+
+<script src="js/films.js"></script>
+<script src="js/store.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
