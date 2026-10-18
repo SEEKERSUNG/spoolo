@@ -757,10 +757,6 @@
   /* ======================================================================
      影集
      ====================================================================== */
-  /* 删除先只改界面，6 秒后才真正写 IndexedDB。
-     Safari 对「删除后再把同一个 Blob 写回」不稳定，软删除避免缩略图丢失 */
-  var pendingDeletes = Object.create(null);
-
   function paintAlbum(rows) {
     state.shots = rows;
     renderFrames(rows);
@@ -781,9 +777,32 @@
   }
 
   function refreshAlbum() {
-    return Store.all().then(function (rows) {
-      rows = rows.filter(function (r) { return !pendingDeletes[r.id]; });
-      paintAlbum(rows);
+    return Store.all().then(paintAlbum);
+  }
+
+  /* 复制成独立的 Blob：撤销时写回副本，不再碰已经被删除的 IndexedDB Blob */
+  function copyBlob(blob) {
+    if (!blob) return Promise.resolve(null);
+    if (blob.arrayBuffer) {
+      return blob.arrayBuffer().then(function (buf) {
+        return new Blob([buf], { type: blob.type || 'image/jpeg' });
+      });
+    }
+    return new Promise(function (resolve) {
+      var r = new FileReader();
+      r.onload = function () { resolve(new Blob([r.result], { type: blob.type || 'image/jpeg' })); };
+      r.onerror = function () { resolve(blob); };
+      r.readAsArrayBuffer(blob);
+    });
+  }
+
+  function copyFrame(row) {
+    return Promise.all([copyBlob(row.blob), copyBlob(row.thumb)]).then(function (blobs) {
+      var out = {};
+      for (var k in row) out[k] = row[k];
+      out.blob = blobs[0] || row.blob;
+      out.thumb = blobs[1] || row.thumb;
+      return out;
     });
   }
 
@@ -892,28 +911,26 @@
     if (!row) return;
     el.lightbox.close();
 
-    /* 先把这一张从界面拿掉，撤销窗口结束后再真正删库 */
     paintAlbum(state.shots.filter(function (r) { return r.id !== row.id; }));
 
-    var timer = setTimeout(function () {
-      Store.remove(row.id).then(function () {
-        delete pendingDeletes[row.id];
-      }).catch(function () {
-        delete pendingDeletes[row.id];
-        refreshAlbum();
-      });
-    }, 6000);
-    pendingDeletes[row.id] = { row: row, timer: timer };
-
-    toast('已删除 ' + row.code + ' #' + pad2(row.frameNo), '撤销', function () {
-      var pending = pendingDeletes[row.id];
-      if (!pending) return;
-      clearTimeout(pending.timer);
-      delete pendingDeletes[row.id];
+    /* 先复制独立 Blob，再立即从 IndexedDB 删除：
+       关掉页面也不会留下「待删除」记录；撤销时写回副本 */
+    var undoCopy = copyFrame(row).then(function (copy) {
+      return Store.remove(row.id).then(function () { return copy; });
+    });
+    undoCopy.catch(function () {
       var rows = state.shots.slice();
       rows.push(row);
       rows.sort(function (a, b) { return b.ts - a.ts; });
       paintAlbum(rows);
+    });
+
+    toast('已删除 ' + row.code + ' #' + pad2(row.frameNo), '撤销', function () {
+      undoCopy.then(function (copy) {
+        return Store.add(copy);
+      }).then(refreshAlbum).catch(function () {
+        toast('撤销失败，请重试');
+      });
     });
   }
 
