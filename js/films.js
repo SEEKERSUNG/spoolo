@@ -257,6 +257,7 @@
     var wantGrain = !!opt.grain && film.grain.amount > 0;
     var wantVig = !!opt.vignette && film.vignette > 0;
     var wantLeak = !!opt.leak && film.leak > 0;
+    var wantFlash = opt.flash ? opt.flash : 0;
 
     var hw = 0, hh = 0, mask = null, haloR = 0, haloAmt = 0, haloCol = null, haloT = 0;
     if (wantHalo) {
@@ -278,6 +279,16 @@
     var normR = Math.sqrt(cx * cx + cy * cy);
 
     var i, x, y, r, g, b, l, mx, mn, s, lum, nrm, shw, hiw, m, mi, mxh, myh;
+
+    /* 漏光的横向系数只算一次，避免每个像素都做 pow */
+    var leakCol = null;
+    if (wantLeak) {
+      leakCol = new Float32Array(w);
+      for (var xi = 0; xi < w; xi++) {
+        var lx0 = 1 - xi / w;
+        leakCol[xi] = Math.pow(lx0 > 0 ? lx0 : 0, 1.6) * 255;
+      }
+    }
 
     /* 第一遍：曲线 + 饱和 + 分离调色，同时生成光晕亮部遮罩 */
     for (y = 0, i = 0; y < h; y++) {
@@ -356,17 +367,26 @@
           b += n2 * ga;
         }
 
+        var dx, d;
+        if (wantVig || wantFlash) {
+          dx = (x - cx) / normR;
+          d = Math.sqrt(dx * dx + dy2);
+        }
+
         if (wantVig) {
-          var dx = (x - cx) / normR;
-          var d = Math.sqrt(dx * dx + dy2);
           var f = 1 - vig * smoothstep(0.45, 1.02, d);
           r *= f; g *= f; b *= f;
         }
 
         if (leakV > 0) {
-          var lx = 1 - x / w;
-          var lf = leakV * Math.pow(lx > 0 ? lx : 0, 1.6) * 255;
+          var lf = leakV * leakCol[x];
           r += lf; g += lf * 0.42; b += lf * 0.10;
+        }
+
+        if (wantFlash) {
+          var fw = 1 - smoothstep(0.12, 0.92, d);
+          var fa = fw * wantFlash * 48;
+          r += fa; g += fa * 0.94; b += fa * 0.86;
         }
 
         data[i] = r < 0 ? 0 : r > 255 ? 255 : r;

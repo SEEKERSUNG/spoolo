@@ -30,7 +30,7 @@
     busy: false,
     dirty: true,
     running: true,
-    previewScale: 0.32,
+    previewPixels: 90000,
     shots: [],
     urls: [],
     current: null,            /* 灯箱中的照片 */
@@ -43,7 +43,7 @@
   state.ev = Math.max(-6, Math.min(6, prefs.ev || 0));
 
   function loadPrefs() {
-    var d = { film: 'PT-400', ev: 0, grid: true, date: false, sound: true, timer: 0, roll: 1, frame: 1 };
+    var d = { film: 'PT-400', ev: 0, grid: true, date: false, sound: true, timer: 0, flash: 0, roll: 1, frame: 1 };
     try {
       var raw = localStorage.getItem(PREFS_KEY);
       if (raw) {
@@ -85,6 +85,8 @@
     evWheel: $('#evWheel'),
     evDrum: $('#evDrum'),
     timerVal: $('#timerVal'),
+    flashVal: $('#flashVal'),
+    flashFx: $('#flashFx'),
     notice: $('#vfNotice'),
     noticeText: $('#vfNoticeText'),
     countdown: $('#countdown'),
@@ -122,10 +124,11 @@
     var r = el.frameBox.getBoundingClientRect();
     if (!r.width || !r.height) return;
     var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-    var target = 240000 * state.previewScale * 2;
+    /* 直接按像素预算控制预览分辨率：手机端每帧只处理约 9 万像素 */
+    var target = state.previewPixels;
     var scale = Math.min(1.05, Math.sqrt(target / (r.width * r.height * dpr * dpr)));
-    pw = Math.max(200, Math.round(r.width * dpr * scale));
-    ph = Math.max(120, Math.round(pw * r.height / r.width));  /* 跟随取景窗实际比例，竖屏不被拉伸 */
+    pw = Math.max(160, Math.round(r.width * dpr * scale));
+    ph = Math.max(100, Math.round(pw * r.height / r.width));  /* 跟随取景窗实际比例，竖屏不被拉伸 */
     if (el.preview.width !== pw || el.preview.height !== ph) {
       el.preview.width = pw;
       el.preview.height = ph;
@@ -185,7 +188,7 @@
   function loop(now) {
     requestAnimationFrame(loop);
     if (!state.running) return;
-    if (now - lastFrame < 1000 / 26) return;
+    if (now - lastFrame < 1000 / 30) return;
     lastFrame = now;
 
     var liveSrc = state.source === 'camera';
@@ -197,12 +200,17 @@
     var dt = performance.now() - t0;
 
     frameTimes.push(dt);
-    if (frameTimes.length > 12) frameTimes.shift();
-    if (liveSrc && now - lastAdapt > 900 && frameTimes.length === 12) {
+    if (frameTimes.length > 10) frameTimes.shift();
+    if (liveSrc && now - lastAdapt > 700 && frameTimes.length === 10) {
       lastAdapt = now;
       var avg = frameTimes.reduce(function (a, b) { return a + b; }, 0) / frameTimes.length;
-      if (avg > 26 && state.previewScale > 0.24) { state.previewScale -= 0.12; layoutPreview(); }
-      else if (avg < 10 && state.previewScale < 0.9) { state.previewScale += 0.1; layoutPreview(); }
+      if (avg > 22 && state.previewPixels > 64000) {
+        state.previewPixels = Math.max(64000, state.previewPixels - 12000);
+        layoutPreview();
+      } else if (avg < 9 && state.previewPixels < 180000) {
+        state.previewPixels = Math.min(180000, state.previewPixels + 10000);
+        layoutPreview();
+      }
       frameTimes.length = 0;
     }
   }
@@ -464,12 +472,42 @@
     setTimeout(function () { el.frameBox.classList.remove('firing'); }, 320);
   }
 
+  function fireFlash() {
+    el.flashFx.classList.remove('firing');
+    void el.flashFx.offsetWidth;
+    el.flashFx.classList.add('firing');
+    setTimeout(function () { el.flashFx.classList.remove('firing'); }, 260);
+  }
+
+  /* 自动闪光：从当前取景画面抽样估亮度 */
+  function sceneLuma() {
+    try {
+      var d = ctx.getImageData(0, 0, pw, ph).data;
+      var sum = 0, n = 0;
+      for (var i = 0; i < d.length; i += 64) {
+        sum += d[i] * 0.2126 + d[i + 1] * 0.7152 + d[i + 2] * 0.0722;
+        n++;
+      }
+      return n ? sum / n / 255 : 0.5;
+    } catch (e) {
+      return 0.5;
+    }
+  }
+
+  function flashShouldFire() {
+    if (prefs.flash === 2) return true;
+    if (prefs.flash !== 1) return false;
+    return sceneLuma() < 0.36;
+  }
+
   function captureShot() {
     if (state.busy) return;
     state.busy = true;
     var film = currentFilm();
     var shot;
+    var flash = flashShouldFire();
 
+    if (flash) fireFlash();
     fireShutter();
     try {
       shot = grabFrame();
@@ -485,7 +523,7 @@
     openProcessing(film, function () {
       develop(shot.canvas, shot.W, shot.H, film, {
         ev: evStops, halation: true, grain: true, vignette: true, leak: true,
-        seed: seed, dateStamp: prefs.date
+        seed: seed, dateStamp: prefs.date, flash: flash ? 1 : 0
       });
       return toBlob(shot.canvas, 0.92).then(function (blob) {
         return makeThumb(shot.canvas, 240).then(function (thumb) {
@@ -498,6 +536,7 @@
             en: film.en,
             iso: film.iso,
             ev: evStops,
+            flash: flash ? 1 : 0,
             w: shot.W,
             h: shot.H,
             date: prefs.date,
@@ -626,7 +665,7 @@
   function openProcessing(film, work) {
     var bar = el.procBar;
     var steps = $$('.proc-steps li');
-    var dur = 1250, t0 = performance.now();
+    var dur = 800, t0 = performance.now();
     var result = null, error = null, settled = false;
 
     el.procTitle.textContent = (film.process === 'B&W' ? '黑白显影中' : film.process + ' 冲印中');
@@ -635,10 +674,13 @@
     bar.style.width = '0';
     steps.forEach(function (s) { s.className = ''; });
 
-    var p = Promise.resolve()
-      .then(work)
-      .then(function (v) { result = v; settled = true; })
-      .catch(function (e) { error = e; settled = true; });
+    /* 先让遮罩画出来，再开始重活，避免首帧就卡住 */
+    setTimeout(function () {
+      Promise.resolve()
+        .then(work)
+        .then(function (v) { result = v; settled = true; })
+        .catch(function (e) { error = e; settled = true; });
+    }, 40);
 
     return new Promise(function (resolve, reject) {
       function tick() {
@@ -657,7 +699,7 @@
             el.processing.hidden = true;
             bar.style.width = '0';
             if (error) reject(error); else resolve(result);
-          }, 340);
+          }, 160);
         };
         wait();
       }
@@ -739,6 +781,7 @@
       '<dt>卷 / 张</dt><dd>ROLL ' + pad2(row.roll) + ' · #' + pad2(row.frameNo) + '</dd>' +
       '<dt>乳剂</dt><dd>' + row.code + ' · ISO ' + row.iso + '</dd>' +
       '<dt>曝光补偿</dt><dd>' + fmtEv(row.ev) + ' EV</dd>' +
+      '<dt>闪光</dt><dd>' + (row.flash ? '已触发' : '未触发') + '</dd>' +
       '<dt>冲印时间</dt><dd>' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
       ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</dd>' +
       '<dt>尺寸</dt><dd>' + row.w + ' × ' + row.h + '</dd>' +
@@ -931,6 +974,12 @@
     if (b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
 
+  var FLASH_CHARS = ['关', '自', '强'];
+  function updateFlashUi() {
+    setPressed('flash', prefs.flash > 0);
+    el.flashVal.textContent = FLASH_CHARS[prefs.flash] || '关';
+  }
+
   function syncEvWheel() {
     /* 每 1/3 档让滚轮纹理移动 3px；负号让向上拨动时纹理向上走 */
     el.evDrum.style.setProperty('--ev-spin', (-state.ev * 3).toFixed(0));
@@ -967,6 +1016,11 @@
         b.setAttribute('aria-pressed', prefs.timer > 0 ? 'true' : 'false');
         el.timerVal.textContent = prefs.timer === 0 ? '关' : prefs.timer + 's';
         toast(prefs.timer === 0 ? '定时关闭' : prefs.timer + ' 秒后自动按快门');
+      } else if (act === 'flash') {
+        prefs.flash = (prefs.flash + 1) % 3;
+        savePrefs();
+        updateFlashUi();
+        toast(['闪光灯已关闭', '闪光灯：自动（暗光时触发）', '闪光灯：强制开启'][prefs.flash]);
       } else if (act === 'grid') {
         prefs.grid = !prefs.grid;
         savePrefs();
@@ -1181,6 +1235,7 @@
     setPressed('date', prefs.date);
     setPressed('sound', prefs.sound);
     setPressed('timer', prefs.timer > 0);
+    updateFlashUi();
     el.timerVal.textContent = prefs.timer === 0 ? '关' : prefs.timer + 's';
     updateEv();
     updateCounter();

@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/base.css?v=1.9.0">
-<link rel="stylesheet" href="css/ui.css?v=1.9.0">
+<link rel="stylesheet" href="css/base.css?v=1.10.0">
+<link rel="stylesheet" href="css/ui.css?v=1.10.0">
 </head>
 <body>
 <div class="room" aria-hidden="true"></div>
@@ -33,7 +33,7 @@
           <span class="maker-name">SPOOLO</span>
           <span class="maker-sub">135 FORMAT · MODEL 35S</span>
           <span class="maker-meta">
-            <span>v1.9.0</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
+            <span>v1.10.0</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
           </span>
         </div>
 
@@ -135,6 +135,11 @@
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="7"/><path d="M12 9.5V13l2.5 1.8"/><path d="M9 3h6"/></svg>
                 <span class="fn-label">定时<b class="fn-val" id="timerVal">关</b></span>
               </button>
+              <button class="fn" type="button" data-act="flash" aria-pressed="false">
+                <span class="led" aria-hidden="true"></span>
+                <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4.5 13.5H10l-1 8.5 8.5-11.5H12l1-8.5z"/></svg>
+                <span class="fn-label">闪光<b class="fn-val" id="flashVal">关</b></span>
+              </button>
               <button class="fn" type="button" data-act="grid" aria-pressed="true">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M12 4v16M4 12h16"/></svg>
@@ -221,13 +226,16 @@
     </div>
 
     <p class="lab-foot">
-      <b>SPOOLO</b> v1.9.0<span>·</span>135 胶片相机
+      <b>SPOOLO</b> v1.10.0<span>·</span>135 胶片相机
       <a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
     </p>
   </aside>
 </main>
 
 <div class="scrim" id="scrim" hidden></div>
+
+<!-- 屏幕闪光：盖在冲印遮罩之上，触发时整屏亮白 -->
+<div class="flash-fx" id="flashFx" aria-hidden="true"></div>
 
 <!-- 冲印中 -->
 <div class="processing" id="processing" hidden role="status" aria-live="polite">
@@ -269,8 +277,8 @@
 
 <input type="file" id="fileInput" class="file-input" accept="image/*">
 
-<script src="js/films.js?v=1.9.0"></script>
-<script src="js/store.js?v=1.9.0"></script>
-<script src="js/app.js?v=1.9.0"></script>
+<script src="js/films.js?v=1.10.0"></script>
+<script src="js/store.js?v=1.10.0"></script>
+<script src="js/app.js?v=1.10.0"></script>
 </body>
 </html>
