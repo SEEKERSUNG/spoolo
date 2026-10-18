@@ -385,7 +385,7 @@
 
         if (wantFlash) {
           var fw = 1 - smoothstep(0.12, 0.92, d);
-          var fa = fw * wantFlash * 48;
+          var fa = fw * wantFlash * 56;
           r += fa; g += fa * 0.94; b += fa * 0.86;
         }
 

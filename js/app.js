@@ -497,17 +497,26 @@
   function flashShouldFire() {
     if (prefs.flash === 2) return true;
     if (prefs.flash !== 1) return false;
-    return sceneLuma() < 0.36;
+    return sceneLuma() < 0.42;
   }
 
   function captureShot() {
     if (state.busy) return;
     state.busy = true;
     var film = currentFilm();
-    var shot;
     var flash = flashShouldFire();
 
-    if (flash) fireFlash();
+    if (flash) {
+      fireFlash();
+      /* 先让整屏闪白真正绘制出来，也顺便给镜头一点补光时间 */
+      setTimeout(function () { takeShot(film, true); }, 120);
+    } else {
+      takeShot(film, false);
+    }
+  }
+
+  function takeShot(film, flash) {
+    var shot;
     fireShutter();
     try {
       shot = grabFrame();
@@ -792,12 +801,43 @@
   function saveCurrent() {
     var row = state.current;
     if (!row) return;
+    var name = 'SPOOLO_' + row.code + '_ROLL' + pad2(row.roll) + '_' + pad2(row.frameNo) + '.jpg';
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    /* iOS Safari 的 blob 下载经常卡在最后；优先走系统分享 / 存储菜单 */
+    if (isIOS) {
+      var file = null;
+      try { file = new File([row.blob], name, { type: 'image/jpeg' }); } catch (e) { /* 老浏览器 */ }
+      var canShare = false;
+      try {
+        canShare = !!(file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] }));
+      } catch (e) { canShare = false; }
+
+      if (canShare) {
+        navigator.share({ files: [file], title: 'SPOOLO ' + row.code }).then(function () {
+          toast('已打开保存菜单');
+        }).catch(function (err) {
+          if (err && err.name === 'AbortError') return;
+          toast('请长按图片保存到相册');
+        });
+        return;
+      }
+      /* 不支持文件分享的 Safari：直接打开原图，让用户长按保存 */
+      window.open(url(row.blob), '_blank');
+      toast('长按图片可保存到相册');
+      return;
+    }
+
+    var href = url(row.blob);
     var a = document.createElement('a');
-    a.href = url(row.blob);
-    a.download = 'SPOOLO_' + row.code + '_ROLL' + pad2(row.roll) + '_' + pad2(row.frameNo) + '.jpg';
+    a.href = href;
+    a.download = name;
+    a.rel = 'noopener';
     document.body.appendChild(a);
     a.click();
-    a.remove();
+    /* 不要立刻移除，避免个别浏览器把下载中断 */
+    setTimeout(function () { a.remove(); }, 1500);
     toast('已保存到本地：' + row.code + ' #' + pad2(row.frameNo));
   }
 
@@ -978,6 +1018,8 @@
   function updateFlashUi() {
     setPressed('flash', prefs.flash > 0);
     el.flashVal.textContent = FLASH_CHARS[prefs.flash] || '关';
+    var b = $('.fn[data-act="flash"]');
+    if (b) b.setAttribute('aria-label', '闪光灯：' + ['关闭', '自动', '强制'][prefs.flash]);
   }
 
   function syncEvWheel() {
