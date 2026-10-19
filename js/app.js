@@ -11,6 +11,9 @@
   try { gpuDevelop = S.GLDevelop ? S.GLDevelop() : null; } catch (e) { gpuDevelop = null; }
   var FRAMES_PER_ROLL = 36;
   var PREFS_KEY = 'spoolo.prefs.v1';
+  /* 影集缩略图按手机 DPR3 的显示尺寸烘焙：240px 会被放大两倍，
+     1px 颗粒被抹平；540px 在 165px 宽的格子里接近 1:1 */
+  var THUMB_W = 540;
 
   var $ = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) {
@@ -946,6 +949,11 @@
     var seed = (Math.random() * 100000) | 0;
     /* 硬件 LED 已经补过光，成片里只留一点暖调；屏幕补光保留完整模拟 */
     var flashAmt = flashKind === 'torch' ? 0.35 : flashKind === 'screen' ? 1 : 0;
+    /* 先在原始画面上缩一张底图；缩略图会在它上面重新跑一遍乳剂管线，
+       让 1px 颗粒按缩略图自己的像素生成，而不是从成片缩小时被平均掉。
+       底图失败也不影响成片，后面会退回普通缩放。 */
+    var thumbBase = null;
+    try { thumbBase = makeThumbBase(shot.canvas); } catch (e) { thumbBase = null; }
 
     openProcessing(film, function () {
       develop(shot.canvas, shot.W, shot.H, film, {
@@ -954,7 +962,13 @@
       });
       return toBlob(shot.canvas, 0.92).then(function (blob) {
         if (!blob) throw new Error('jpeg-encode-failed');
-        return makeThumb(shot.canvas, 240).then(function (thumb) {
+        return makeThumb(shot.canvas, thumbBase, film, {
+          ev: capture.ev, halation: true, grain: true, vignette: true, leak: true,
+          seed: seed, dateStamp: capture.date, flash: flashAmt
+        }).catch(function () {
+          /* 缩略图管线失败时退回普通缩放，绝不因此丢掉整张照片 */
+          return scaledThumb(shot.canvas).catch(function () { return null; });
+        }).then(function (thumb) {
           var frame = {
             id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
             roll: capture.roll,
@@ -994,7 +1008,22 @@
   function grabFrame() {
     var src = activeSource();
     var size = sourceSize(src);
-    var ratio = pw / ph;   /* 取景窗实际长宽比：手机竖屏拍出来的构图与所见的完全一致 */
+    /* 以取景框声明的 CSS 长宽比为准：预览画布和首屏 rect 都可能在布局稳定前
+       被量过一次，不能再拿它们当作构图比例，否则成片会被裁成错误的长宽。
+       竖屏是 3:4，横屏 / 桌面是 3:2，这正是用户看到的取景框。 */
+    var ratio = 0;
+    try {
+      var ar = getComputedStyle(el.frameBox).aspectRatio || '';
+      var parts = ar.split('/');
+      if (parts.length === 2) {
+        var aw = parseFloat(parts[0]), ah = parseFloat(parts[1]);
+        if (aw > 0 && ah > 0) ratio = aw / ah;
+      }
+    } catch (e) { ratio = 0; }
+    if (!ratio) {
+      var fr = el.frameBox.getBoundingClientRect();
+      ratio = fr.width > 0 && fr.height > 0 ? fr.width / fr.height : pw / ph;
+    }
     var crop = coverRect(size.w, size.h, ratio);
     var W, H;
     if (ratio >= 1) {
@@ -1052,13 +1081,38 @@
     });
   }
 
-  function makeThumb(canvas, w) {
+  /* 成片分辨率的原始底图先缩到缩略图尺寸，保留未冲洗状态 */
+  function makeThumbBase(src) {
+    if (!src || src.width <= THUMB_W) return null;
     var c = document.createElement('canvas');
-    c.width = w;
+    c.width = THUMB_W;
     /* 跟随成片实际比例：竖幅底片的缩略图不能再按 3:2 横构图裁 */
-    c.height = Math.max(1, Math.round(w * canvas.height / canvas.width));
-    c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height);
+    c.height = Math.max(1, Math.round(THUMB_W * src.height / src.width));
+    var cc = c.getContext('2d');
+    cc.imageSmoothingQuality = 'high';
+    cc.drawImage(src, 0, 0, c.width, c.height);
+    return c;
+  }
+
+  function scaledThumb(full) {
+    var c = document.createElement('canvas');
+    c.width = Math.min(THUMB_W, full.width);
+    c.height = Math.max(1, Math.round(c.width * full.height / full.width));
+    var cc = c.getContext('2d');
+    cc.imageSmoothingQuality = 'high';
+    cc.drawImage(full, 0, 0, c.width, c.height);
     return toBlob(c, 0.72);
+  }
+
+  function makeThumb(full, base, film, opts) {
+    if (base) {
+      /* 缩略图重新走一遍乳剂管线：颗粒按缩略图自己的像素生成，
+         不会被整张成片缩放时的平均抹成一片平滑灰 */
+      develop(base, base.width, base.height, film, opts);
+      return toBlob(base, 0.72);
+    }
+    /* 导入的小图本身没超过缩略图宽度：直接从成片缩，避免把低分辨率原图放大 */
+    return scaledThumb(full);
   }
 
   function advanceFrame(capture) {
@@ -2151,6 +2205,11 @@
     bindControls();
     refreshAlbum();
     layoutPreview();
+    /* 字体或首屏布局可能晚于 DOMContentLoaded 稳定，再量两次取景框 */
+    window.addEventListener('load', layoutPreview);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(layoutPreview).catch(function () {});
+    }
     requestAnimationFrame(loop);
 
     startCamera('environment').then(function (ok) {
