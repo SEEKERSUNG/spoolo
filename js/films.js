@@ -81,7 +81,7 @@
       shadowTint: [-0.010, 0.004, 0.022], highTint: [0.010, -0.004, 0.020],
       shoulder: 0.74,
       halation: { amount: 0.40, radius: 14, threshold: 0.58, color: [1, 0.35, 0.22] },
-      grain: { amount: 0.100, size: 2, shadow: 2.2 }, vignette: 0.26, leak: 0
+      grain: { amount: 0.100, size: 1, shadow: 2.2 }, vignette: 0.26, leak: 0
     },
     {
       code: 'TX-400', name: '粗粒黑白', en: 'GRITTY MONO', process: 'B&W', iso: 400,
@@ -113,7 +113,7 @@
     },
     {
       code: 'LC-800', name: '野性漏光', en: 'WILD LEAK', process: 'C-41', iso: 800,
-      note: '高饱和、大颗粒、重暗角，还会偷偷漏一点光进来。',
+      note: '高饱和、重颗粒、重暗角，还会偷偷漏一点光进来。',
       tone: '#d94f2b',
       contrast: [1.16, 1.06, 1.02], lift: [0.020, 0.026, 0.034],
       gamma: [0.98, 1.00, 1.00], gain: [1.06, 0.99, 0.96],
@@ -121,7 +121,7 @@
       shadowTint: [-0.008, 0.014, 0.026], highTint: [0.040, 0.012, -0.020],
       shoulder: 0.70,
       halation: { amount: 0.26, radius: 12, threshold: 0.62, color: [1, 0.40, 0.28] },
-      grain: { amount: 0.120, size: 2, shadow: 2.4 }, vignette: 0.40, leak: 0.34
+      grain: { amount: 0.120, size: 1, shadow: 2.4 }, vignette: 0.40, leak: 0.34
     },
     {
       code: 'PR-160', name: '清透人像', en: 'CLEAN PORTRAIT', process: 'C-41', iso: 160,
@@ -177,7 +177,7 @@
       shadowTint: [-0.012, 0.002, 0.030], highTint: [0.030, -0.010, 0.034],
       shoulder: 0.72,
       halation: { amount: 0.50, radius: 16, threshold: 0.54, color: [1, 0.30, 0.40] },
-      grain: { amount: 0.110, size: 2, shadow: 2.4 }, vignette: 0.30, leak: 0.10
+      grain: { amount: 0.110, size: 1, shadow: 2.4 }, vignette: 0.30, leak: 0.10
     },
     {
       code: 'BL-400', name: '蓝调时刻', en: 'BLUE HOUR', process: 'C-41', iso: 400,
