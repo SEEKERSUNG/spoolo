@@ -801,12 +801,14 @@
     countdownTimer = null;
     el.countdown.hidden = true;
     state.busy = false;
+    el.shutter.disabled = state.rewinding;
     return true;
   }
 
   function runCountdown(sec, done) {
     cancelCountdown();
     state.busy = true;
+    el.shutter.disabled = true;
     var n = sec;
     el.countdown.hidden = false;
     el.countdown.textContent = n;
@@ -891,20 +893,28 @@
     if (state.busy) return;
     if (state.rewinding) { toast('正在回卷，等新卷上好再拍'); return; }
     state.busy = true;
-    var film = currentFilm();
+    /* 快门按下的一刻就把这一格定下来：之后的冲印动画、换卷、日期开关
+       都不能再改写它的卷号 / 张号 / 乳剂 / EV / 日期打印 */
+    var capture = {
+      film: currentFilm(),
+      roll: prefs.roll,
+      frameNo: prefs.frame,
+      date: prefs.date,
+      ev: state.ev / 3
+    };
     var flash = flashShouldFire();
 
-    if (!flash) { takeShot(film, ''); return; }
+    if (!flash) { takeShot(capture, ''); return; }
 
     var track = torchTrack();
     if (track) {
       setTorch(track, true).then(function (ok) {
         if (ok) {
           /* 给 LED 一点时间把画面照亮 */
-          setTimeout(function () { takeShot(film, 'torch', track); }, 180);
+          setTimeout(function () { takeShot(capture, 'torch', track); }, 180);
         } else {
           fireFlash();
-          setTimeout(function () { takeShot(film, 'screen'); }, 120);
+          setTimeout(function () { takeShot(capture, 'screen'); }, 120);
         }
       });
       return;
@@ -912,11 +922,12 @@
 
     /* 没有硬件 torch：整屏闪白补光 */
     fireFlash();
-    setTimeout(function () { takeShot(film, 'screen'); }, 120);
+    setTimeout(function () { takeShot(capture, 'screen'); }, 120);
   }
 
-  function takeShot(film, flashKind, torch) {
+  function takeShot(capture, flashKind, torch) {
     var shot;
+    var film = capture.film;
     fireShutter();
     try {
       shot = grabFrame();
@@ -928,33 +939,36 @@
     }
     if (torch) setTorch(torch, false);
 
-    var evStops = state.ev / 3;
+    /* 画面已经抓到手，立刻落盘编号：即使随后刷新 / 关页，下一次也不会
+       重复使用同一个 ROLL / # 号；若期间用户已经回卷，则只记录旧卷，不动新卷 */
+    advanceFrame(capture);
+
     var seed = (Math.random() * 100000) | 0;
     /* 硬件 LED 已经补过光，成片里只留一点暖调；屏幕补光保留完整模拟 */
     var flashAmt = flashKind === 'torch' ? 0.35 : flashKind === 'screen' ? 1 : 0;
 
     openProcessing(film, function () {
       develop(shot.canvas, shot.W, shot.H, film, {
-        ev: evStops, halation: true, grain: true, vignette: true, leak: true,
-        seed: seed, dateStamp: prefs.date, flash: flashAmt
+        ev: capture.ev, halation: true, grain: true, vignette: true, leak: true,
+        seed: seed, dateStamp: capture.date, flash: flashAmt
       });
       return toBlob(shot.canvas, 0.92).then(function (blob) {
         if (!blob) throw new Error('jpeg-encode-failed');
         return makeThumb(shot.canvas, 240).then(function (thumb) {
           var frame = {
             id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
-            roll: prefs.roll,
-            frameNo: prefs.frame,
+            roll: capture.roll,
+            frameNo: capture.frameNo,
             code: film.code,
             name: film.name,
             en: film.en,
             iso: film.iso,
-            ev: evStops,
+            ev: capture.ev,
             flash: flashKind ? 1 : 0,
             flashKind: flashKind,
             w: shot.W,
             h: shot.H,
-            date: prefs.date,
+            date: capture.date,
             ts: Date.now(),
             blob: blob,
             thumb: thumb || blob
@@ -969,7 +983,6 @@
       state.busy = false;
       if (!frame) return;
       if (frame.persisted === false) toast('存储不可用 · 这张只在本次会话');
-      advanceFrame();
       refreshAlbum();
     }).catch(function () {
       state.busy = false;
@@ -1048,7 +1061,9 @@
     return toBlob(c, 0.72);
   }
 
-  function advanceFrame() {
+  function advanceFrame(capture) {
+    /* 抓帧期间用户已经手动回卷：这一格属于旧卷，不能再把新卷第 1 张顶掉 */
+    if (capture && (prefs.roll !== capture.roll || prefs.frame !== capture.frameNo)) return;
     prefs.frame += 1;
     if (prefs.frame > FRAMES_PER_ROLL) {
       rewind('本卷已拍完 · 回卷换新');
@@ -1474,6 +1489,15 @@
         '<dt>尺寸</dt><dd>' + row.w + ' × ' + row.h + '</dd>' +
         '<dt>日期打印</dt><dd>' + (row.date ? '已开启' : '未开启') + '</dd>';
       el.lightbox.showModal();
+      /* 原生 dialog 会聚焦第一个可操作项并把它滚进视口；这里统一回到顶部，
+         让小屏 / 横屏打开时先看到照片，而不是直接落在保存按钮上 */
+      el.lightbox.scrollTop = 0;
+      var side = $('.lb-side', el.lightbox);
+      if (side) side.scrollTop = 0;
+      /* 焦点放在 dialog 本身，避免浏览器把保存按钮滚进视口；也不至于一按
+         空格 / 回车就误触某个操作（Tab 再进入关闭、保存、删除） */
+      try { el.lightbox.focus({ preventScroll: true }); } catch (e) { el.lightbox.focus(); }
+      if (!el.toast.hidden) placeToast();
     }).catch(function () {
       toast('这张底片读不出来，请刷新影集');
     });
@@ -1659,7 +1683,16 @@
      Toast
      ====================================================================== */
   var toastTimer = null, toastHideTimer = null, toastAction = null;
+
+  /* 原生 dialog 位于 top layer，普通 fixed 元素会被它整体盖住；
+     灯箱打开时把 Toast 临时挂到 dialog 内部，关闭时再搬回 body */
+  function placeToast() {
+    var host = el.lightbox.open ? el.lightbox : document.body;
+    if (el.toast.parentNode !== host) host.appendChild(el.toast);
+  }
+
   function toast(msg, actionLabel, action) {
+    placeToast();
     el.toastText.textContent = msg;
     toastAction = action || null;
     if (actionLabel && action) {
@@ -1813,6 +1846,8 @@
         savePrefs();
         b.setAttribute('aria-pressed', prefs.timer > 0 ? 'true' : 'false');
         el.timerVal.textContent = prefs.timer === 0 ? '关' : prefs.timer + 's';
+        /* 倒计时已经跑起来时把定时切回「关」，应当取消这次拍摄 */
+        if (prefs.timer === 0) cancelCountdown();
       } else if (act === 'flash') {
         prefs.flash = (prefs.flash + 1) % 3;
         savePrefs();
@@ -1992,11 +2027,21 @@
     /* 灯箱 */
     el.lightbox.addEventListener('click', function (e) {
       var b = e.target.closest('[data-act]');
-      if (!b) return;
+      if (!b) {
+        /* 点灯箱外的遮罩也能关闭；小屏上不必先滚到底部找“关闭” */
+        if (e.target === el.lightbox) el.lightbox.close();
+        return;
+      }
       var act = b.dataset.act;
       if (act === 'save') saveCurrent();
       else if (act === 'del') deleteCurrent();
       else if (act === 'close') el.lightbox.close();
+    });
+
+    /* Toast 在灯箱打开时被搬进 dialog（原生 dialog 在 top layer，会盖住普通 z-index）；
+       关闭后搬回 body，避免它跟着隐藏的 dialog 一起消失 */
+    el.lightbox.addEventListener('close', function () {
+      if (el.toast.parentNode === el.lightbox) document.body.appendChild(el.toast);
     });
 
     el.toastUndo.addEventListener('click', function () {
@@ -2036,6 +2081,12 @@
       if (e.repeat) return;
       if (e.target && e.target.matches && e.target.matches('input, select, textarea')) return;
       if (el.lightbox.open) return;
+      /* 冲印遮罩和手机抽屉都是模态状态：里面的按键不应改到背后的相机设置 */
+      if (!el.processing.hidden) return;
+      if (isMobile() && el.lab.classList.contains('open')) {
+        if (e.key === 'Escape') { e.preventDefault(); closeLab(); }
+        return;
+      }
       if (e.key === ' ' || e.key === 'Enter') {
         if (e.target === document.body || e.target === el.shutter) {
           e.preventDefault();
@@ -2102,7 +2153,7 @@
     layoutPreview();
     requestAnimationFrame(loop);
 
-    startCamera(prefs.facing === 'user' ? 'user' : 'environment').then(function (ok) {
+    startCamera('environment').then(function (ok) {
       if (ok) return;
       /* 用户已经在导入底片（或已有画面）时不弹失败提示，也不再挂重试 */
       if (state.source !== 'none' || state.sourceLock) return;

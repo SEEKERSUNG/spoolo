@@ -10,8 +10,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/base.css?v=1.12.1">
-<link rel="stylesheet" href="css/ui.css?v=1.12.1">
+<link rel="stylesheet" href="css/base.css?v=1.12.2">
+<link rel="stylesheet" href="css/ui.css?v=1.12.2">
 </head>
 <body>
 <div class="room" aria-hidden="true"></div>
@@ -25,7 +25,7 @@
 
       <!-- 顶盖 -->
       <div class="plate">
-        <button class="rewind" id="rewind" type="button" aria-label="回卷旋钮，长按可换卷">
+        <button class="rewind" id="rewind" type="button" aria-label="回卷换新卷">
           <span class="rewind-cap" aria-hidden="true"><i></i></span>
           <span class="engrave">REWIND</span>
         </button>
@@ -34,7 +34,7 @@
           <span class="maker-name">SPOOLO</span>
           <span class="maker-sub">135 FORMAT · MODEL 35S</span>
           <span class="maker-meta">
-            <span>v1.12.1</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
+            <span>v1.12.2</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
           </span>
         </div>
 
@@ -87,7 +87,7 @@
                 </span>
               </p>
 
-              <div class="countdown" id="countdown" hidden aria-hidden="true"></div>
+              <div class="countdown" id="countdown" hidden role="status" aria-live="polite"></div>
               <div class="blackout" id="blackout" aria-hidden="true"></div>
             </div>
 
@@ -220,7 +220,7 @@
         <button class="chip" id="albumManage" type="button" aria-pressed="false">管理</button>
       </div>
       <div class="album-batch" id="albumBatch" hidden>
-        <span class="batch-count" id="batchCount">已选 0 张</span>
+        <span class="batch-count" id="batchCount" role="status" aria-live="polite">已选 0 张</span>
         <button class="chip" id="batchAll" type="button">全选</button>
         <button class="chip" id="batchSave" type="button" disabled>保存所选</button>
         <button class="chip danger" id="batchDelete" type="button" disabled>删除所选</button>
@@ -232,7 +232,7 @@
     </div>
 
     <p class="lab-foot">
-      <b>SPOOLO</b> v1.12.1<span>·</span>135 胶片相机
+      <b>SPOOLO</b> v1.12.2<span>·</span>135 胶片相机
       <a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
     </p>
   </aside>
@@ -256,8 +256,9 @@
 </div>
 
 <!-- 单张查看 -->
-<dialog class="lightbox" id="lightbox" aria-label="查看照片">
+<dialog class="lightbox" id="lightbox" aria-label="查看照片" tabindex="-1">
   <div class="lb-stage">
+    <button class="lb-close" type="button" data-act="close" aria-label="关闭灯箱">×</button>
     <div class="lb-film">
       <span class="perf left" aria-hidden="true"></span>
       <img id="lbImage" alt="">
@@ -283,10 +284,10 @@
 
 <input type="file" id="fileInput" class="file-input" accept="image/*" tabindex="-1" aria-hidden="true">
 
-<script src="js/films.js?v=1.12.1"></script>
-<script src="js/store.js?v=1.12.1"></script>
-<script src="js/gpu-develop.js?v=1.12.1"></script>
-<script src="js/zip.js?v=1.12.1"></script>
-<script src="js/app.js?v=1.12.1"></script>
+<script src="js/films.js?v=1.12.2"></script>
+<script src="js/store.js?v=1.12.2"></script>
+<script src="js/gpu-develop.js?v=1.12.2"></script>
+<script src="js/zip.js?v=1.12.2"></script>
+<script src="js/app.js?v=1.12.2"></script>
 </body>
 </html>

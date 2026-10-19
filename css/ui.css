@@ -936,13 +936,20 @@
   border-radius: 18px;
   background: linear-gradient(180deg, oklch(24% 0.010 70), oklch(18% 0.010 70));
   color: var(--txt);
-  overflow: auto;
+  /* 单列时取景台吃掉剩余高度，操作区保持完整；不再让整个 dialog 滚动 */
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
   box-shadow: 0 60px 90px -50px oklch(0% 0 0 / 1);
 }
 .lightbox::backdrop { background: oklch(0% 0 0 / 0.8); backdrop-filter: blur(8px); }
 .lightbox:not([open]) { display: none; }
+.lightbox:focus { outline: none; }
 
 .lb-stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
   place-items: center;
   padding: 18px;
@@ -953,27 +960,55 @@
 .lb-film {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) 16px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   background: var(--film-base);
   border-radius: 6px;
   overflow: hidden;
   padding: 6px 0;
   box-shadow: 0 20px 40px -22px oklch(0% 0 0 / 1);
 }
+/* 由取景台的可用高度决定照片尺寸：短屏时照片整体缩小，不再被裁掉下半截 */
 .lb-film img {
   display: block;
-  justify-self: center;
-  width: auto;
-  max-width: 100%;
-  max-height: 62svh;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   object-fit: contain;
   background: oklch(8% 0.01 60);
 }
-.lb-film .perf { min-height: 120px; }
+.lb-film .perf { min-height: 0; }
+
+.lb-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid oklch(100% 0 0 / 0.2);
+  border-radius: 50%;
+  background: oklch(12% 0.01 65 / 0.72);
+  color: var(--txt);
+  font: 400 22px/1 var(--font-mono);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.lb-close:hover { background: oklch(20% 0.01 65 / 0.9); }
+.lb-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .lb-side {
   display: grid;
   gap: 10px;
   padding: 18px;
+  min-height: 0;
+  overflow-y: auto;
 }
 .lb-code {
   font: 600 20px/1 var(--font-mono);
@@ -1007,8 +1042,13 @@
 .btn.danger { color: oklch(80% 0.14 30); border-color: oklch(56% 0.15 30 / 0.5); }
 .btn.ghost { background: transparent; color: var(--txt-2); }
 
-@media (min-width: 760px) {
-  .lightbox { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); }
+/* 横屏手机常见 667～740px 宽：早点切双列，照片和操作区才能同时看到 */
+@media (min-width: 560px) {
+  .lightbox {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
   .lightbox:not([open]) { display: none; }
 }
 
