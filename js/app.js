@@ -7,6 +7,8 @@
   var S = window.SPOOLO;
   var FILMS = S.FILMS;
   var Store = S.Store;
+  var gpuDevelop = null;
+  try { gpuDevelop = S.GLDevelop ? S.GLDevelop() : null; } catch (e) { gpuDevelop = null; }
   var FRAMES_PER_ROLL = 36;
   var PREFS_KEY = 'spoolo.prefs.v1';
 
@@ -496,14 +498,10 @@
       failCamera(window.isSecureContext ? '浏览器不支持镜头调用' : '手机只允许 HTTPS 调用镜头');
       return Promise.resolve(false);
     }
-    /* 手机端降到 1440×1080：纹理上传和成片像素量都明显下降，取景更凉快 */
-    var mobileCam = window.matchMedia('(max-width: 999px)').matches;
-    var idealW = mobileCam ? 1440 : 1920;
-    var idealH = mobileCam ? 1080 : 1440;
     camStart = navigator.mediaDevices.getUserMedia({
       audio: false,
       /* 要 4:3（多数手机 CMOS 的原生比例），竖屏取景框就是它转 90°，几乎不用裁切 */
-      video: { facingMode: { ideal: facing }, width: { ideal: idealW }, height: { ideal: idealH } }
+      video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1440 } }
     }).then(function (stream) {
       /* 等到结果时用户已经导入了底片：这条流不能再顶掉他选好的画面 */
       if (state.sourceLock) {
@@ -997,9 +995,17 @@
 
   function develop(canvas, W, H, film, opts) {
     var cc = canvas.getContext('2d');
-    var d = cc.getImageData(0, 0, W, H);
-    S.render(d.data, W, H, film, opts);
-    cc.putImageData(d, 0, 0);
+    var gpuOk = false;
+    if (gpuDevelop) {
+      try { gpuOk = gpuDevelop.render(canvas, W, H, film, opts); } catch (e) { gpuOk = false; }
+    }
+    if (gpuOk) {
+      cc.drawImage(gpuDevelop.canvas, 0, 0, W, H);
+    } else {
+      var d = cc.getImageData(0, 0, W, H);
+      S.render(d.data, W, H, film, opts);
+      cc.putImageData(d, 0, 0);
+    }
     if (opts && opts.dateStamp) stampDate(cc, W, H);
     return canvas;
   }
