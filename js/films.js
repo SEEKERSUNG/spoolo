@@ -122,6 +122,74 @@
       shoulder: 0.70,
       halation: { amount: 0.26, radius: 12, threshold: 0.62, color: [1, 0.40, 0.28] },
       grain: { amount: 0.120, size: 2, shadow: 2.4 }, vignette: 0.40, leak: 0.34
+    },
+    {
+      code: 'PR-160', name: '清透人像', en: 'CLEAN PORTRAIT', process: 'C-41', iso: 160,
+      note: '低反差、极细颗粒，肤色干净通透，室内外人像都稳。',
+      tone: '#d4b49c',
+      contrast: [0.97, 0.96, 0.95], lift: [0.020, 0.016, 0.012],
+      gamma: [1.00, 1.00, 1.01], gain: [1.02, 1.00, 0.99],
+      sat: 1.02, vibrance: 0.10,
+      shadowTint: [0.010, 0.008, 0.004], highTint: [0.014, 0.006, -0.006],
+      shoulder: 0.72,
+      halation: { amount: 0.10, radius: 7, threshold: 0.76, color: [1, 0.50, 0.32] },
+      grain: { amount: 0.020, size: 1, shadow: 1.2 }, vignette: 0.13, leak: 0
+    },
+    {
+      code: 'EV-100', name: '经典正片', en: 'CLASSIC CHROME', process: 'E-6', iso: 100,
+      note: '通透正片：青蓝干净、绿色挺括，强光下也不容易发灰。',
+      tone: '#3f7fa6',
+      contrast: [1.13, 1.08, 1.05], lift: [0.004, 0.004, 0.008],
+      gamma: [0.99, 1.00, 0.99], gain: [1.02, 1.01, 1.04],
+      sat: 1.24, vibrance: 0.20,
+      shadowTint: [-0.006, 0.006, 0.016], highTint: [0.012, 0.004, 0.008],
+      shoulder: 0.78,
+      halation: { amount: 0.08, radius: 6, threshold: 0.82, color: [1, 0.42, 0.26] },
+      grain: { amount: 0.026, size: 1, shadow: 1.3 }, vignette: 0.16, leak: 0
+    },
+    {
+      code: 'HP-400', name: '纪实黑白', en: 'DOCUMENTARY MONO', process: 'B&W', iso: 400,
+      note: '中灰厚实、颗粒可见，街头与纪实黑白的主力。',
+      tone: '#7a766d', bw: true,
+      contrast: 1.16, lift: 0.002, gamma: 1.03, gain: 1.02, shoulder: 0.72,
+      shadowTint: [0.002, 0.002, 0.006], highTint: [0.006, 0.006, 0.008],
+      grain: { amount: 0.078, size: 1, shadow: 1.9 }, vignette: 0.20, leak: 0
+    },
+    {
+      code: 'FL-200', name: '复古暖调', en: 'VINTAGE WARM', process: 'C-41', iso: 200,
+      note: '金黄偏暖、黑位略抬，像翻出二十年前的旅行照片。',
+      tone: '#c58a52',
+      contrast: [1.00, 0.97, 0.93], lift: [0.028, 0.024, 0.020],
+      gamma: [1.00, 1.00, 1.02], gain: [1.04, 1.00, 0.93],
+      sat: 1.04, vibrance: 0.12,
+      shadowTint: [0.010, 0.010, 0.000], highTint: [0.036, 0.018, -0.020],
+      shoulder: 0.70,
+      halation: { amount: 0.15, radius: 9, threshold: 0.72, color: [1, 0.48, 0.28] },
+      grain: { amount: 0.052, size: 1, shadow: 1.6 }, vignette: 0.20, leak: 0.08
+    },
+    {
+      code: 'NS-800', name: '霓虹夜色', en: 'NEON NIGHT', process: 'C-41', iso: 800,
+      note: '紫红高光配青蓝阴影，大片光晕，专拍霓虹与夜景。',
+      tone: '#8b3fa8',
+      contrast: [1.00, 0.97, 1.06], lift: [0.034, 0.030, 0.048],
+      gamma: [1.01, 1.00, 0.97], gain: [1.00, 0.98, 1.07],
+      sat: 1.16, vibrance: 0.22,
+      shadowTint: [-0.012, 0.002, 0.030], highTint: [0.030, -0.010, 0.034],
+      shoulder: 0.72,
+      halation: { amount: 0.50, radius: 16, threshold: 0.54, color: [1, 0.30, 0.40] },
+      grain: { amount: 0.110, size: 2, shadow: 2.4 }, vignette: 0.30, leak: 0.10
+    },
+    {
+      code: 'BL-400', name: '蓝调时刻', en: 'BLUE HOUR', process: 'C-41', iso: 400,
+      note: '冷蓝阴影、克制的暖高光，黄昏之后的安静色调。',
+      tone: '#3d6f9e',
+      contrast: [1.04, 1.02, 0.98], lift: [0.024, 0.026, 0.034],
+      gamma: [1.00, 1.00, 0.99], gain: [0.98, 1.00, 1.05],
+      sat: 1.08, vibrance: 0.16,
+      shadowTint: [-0.008, 0.004, 0.022], highTint: [0.010, 0.000, 0.016],
+      shoulder: 0.74,
+      halation: { amount: 0.22, radius: 11, threshold: 0.66, color: [1, 0.44, 0.30] },
+      grain: { amount: 0.062, size: 1, shadow: 1.8 }, vignette: 0.24, leak: 0
     }
   ];
 

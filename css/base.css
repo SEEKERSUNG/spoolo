@@ -71,7 +71,6 @@
   /* 取景器状态（由 JS 写入） */
   --vig: 0.2;
   --leak: 0;
-  --grain: 0.05;
 }
 
 * { box-sizing: border-box; }
@@ -617,25 +616,6 @@ button, input, select { font: inherit; color: inherit; }
     oklch(70% 0.19 55 / var(--leak)) 0%, transparent 62%);
   mix-blend-mode: screen;
 }
-.fx.grain {
-  opacity: var(--grain);
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='200' height='200' filter='url(%23g)'/></svg>");
-  background-size: 200px 200px;
-  animation: grain-drift 1.4s steps(5, end) infinite;
-}
-@keyframes grain-drift {
-  0%   { transform: translate3d(0, 0, 0); }
-  20%  { transform: translate3d(-3%, 2%, 0); }
-  40%  { transform: translate3d(2%, -3%, 0); }
-  60%  { transform: translate3d(-2%, -2%, 0); }
-  80%  { transform: translate3d(3%, 1%, 0); }
-  100% { transform: translate3d(0, 0, 0); }
-}
-/* 手机端保留静态颗粒，关掉会触发整帧重绘的漂移动画 */
-@media (max-width: 999px) {
-  .fx.grain { animation: none; }
-}
 .fx.glass {
   background:
     linear-gradient(155deg, oklch(100% 0 0 / 0.09) 0%, transparent 34%),
@@ -839,7 +819,6 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fx.grain { animation: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

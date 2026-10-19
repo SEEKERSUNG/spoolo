@@ -355,13 +355,13 @@
   }
 
   /* ======================================================================
-     影调取景器变量（颗粒 / 暗角 / 漏光）
+     影调取景器变量（暗角 / 漏光）
+     颗粒不参与取景：只在成片冲印时由像素管线加入
      ====================================================================== */
   function applyFilmVars(f) {
     var st = el.frameBox.style;
     st.setProperty('--vig', f.vignette.toFixed(2));
     st.setProperty('--leak', (f.leak || 0).toFixed(2));
-    st.setProperty('--grain', Math.min(0.16, 0.012 + f.grain.amount * 0.85).toFixed(3));
   }
 
   /* ======================================================================
@@ -385,7 +385,7 @@
     el.roIso.textContent = f.iso;
     el.rollKnob.setAttribute('aria-valuenow', i + 1);
     el.rollKnob.setAttribute('aria-valuetext', f.code + ' ' + f.name);
-    el.rollKnob.style.setProperty('--rot', (i * 36) + 'deg');
+    el.rollKnob.style.setProperty('--rot', (i * 360 / n) + 'deg');
     applyFilmVars(f);
     updateEdgeCode();
     refreshPreview();
@@ -431,6 +431,8 @@
     });
     el.filmList.innerHTML = html;
     $('#filmCount').textContent = FILMS.length;
+    /* 胶卷总数即旋钮量程：以后再加乳剂也不用改 HTML */
+    el.rollKnob.setAttribute('aria-valuemax', FILMS.length);
   }
 
   /* ======================================================================

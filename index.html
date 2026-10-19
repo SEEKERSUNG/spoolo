@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/base.css?v=1.10.5">
-<link rel="stylesheet" href="css/ui.css?v=1.10.5">
+<link rel="stylesheet" href="css/base.css?v=1.11.0">
+<link rel="stylesheet" href="css/ui.css?v=1.11.0">
 </head>
 <body>
 <div class="room" aria-hidden="true"></div>
@@ -33,7 +33,7 @@
           <span class="maker-name">SPOOLO</span>
           <span class="maker-sub">135 FORMAT · MODEL 35S</span>
           <span class="maker-meta">
-            <span>v1.10.5</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
+            <span>v1.11.0</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
           </span>
         </div>
 
@@ -57,7 +57,6 @@
 
               <div class="fx vignette" aria-hidden="true"></div>
               <div class="fx leak" aria-hidden="true"></div>
-              <div class="fx grain" aria-hidden="true"></div>
               <div class="fx glass" aria-hidden="true"></div>
 
               <div class="marks" id="marks" aria-hidden="true">
@@ -98,7 +97,7 @@
         <!-- 胶片仓 -->
         <div class="chamber">
           <div class="roll-knob" id="rollKnob" role="slider" tabindex="0"
-               aria-label="选择胶卷" aria-valuemin="1" aria-valuemax="10" aria-valuenow="1"
+               aria-label="选择胶卷" aria-valuemin="1" aria-valuemax="16" aria-valuenow="1"
                aria-valuetext="PT-400 暖肤人像">
             <span class="roll-cap" aria-hidden="true"><i></i></span>
             <span class="roll-ticks" aria-hidden="true"></span>
@@ -117,7 +116,7 @@
 
           <button class="chip" id="openFilms" type="button" aria-haspopup="dialog" aria-controls="lab">
             <svg class="chip-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16l8 4 8-4"/></svg>
-            <span>胶卷库</span><span class="chip-count" id="filmCount">10</span>
+            <span>胶卷库</span><span class="chip-count" id="filmCount">16</span>
           </button>
         </div>
 
@@ -210,7 +209,7 @@
     </div>
 
     <div class="panel" id="panelFilms" role="tabpanel" aria-labelledby="tabFilms" tabindex="0">
-      <p class="panel-note">十种乳剂代号，仿色自经典胶片。换卷即刻生效。</p>
+      <p class="panel-note">十六种乳剂代号，仿色自经典胶片。换卷即刻生效。</p>
       <ul class="film-list" id="filmList"></ul>
     </div>
 
@@ -226,7 +225,7 @@
     </div>
 
     <p class="lab-foot">
-      <b>SPOOLO</b> v1.10.5<span>·</span>135 胶片相机
+      <b>SPOOLO</b> v1.11.0<span>·</span>135 胶片相机
       <a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
     </p>
   </aside>
@@ -277,8 +276,8 @@
 
 <input type="file" id="fileInput" class="file-input" accept="image/*">
 
-<script src="js/films.js?v=1.10.5"></script>
-<script src="js/store.js?v=1.10.5"></script>
-<script src="js/app.js?v=1.10.5"></script>
+<script src="js/films.js?v=1.11.0"></script>
+<script src="js/store.js?v=1.11.0"></script>
+<script src="js/app.js?v=1.11.0"></script>
 </body>
 </html>
