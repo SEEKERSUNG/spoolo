@@ -26,7 +26,7 @@
     live: false,
     mirror: false,
     source: 'none',           /* camera | file | none */
-    camErr: null,             /* 最近一次镜头启动失败的错误名 */
+    sourceLock: false,        /* 用户已选好导入底片，晚到的镜头请求不再顶掉它 */
     busy: false,
     rewinding: false,         /* 回卷动画期间不接受新的快门 */
     dirty: true,
@@ -34,14 +34,41 @@
     previewPixels: 90000,
     shots: [],
     urls: [],
-    current: null,            /* 灯箱中的照片 */
-    pendingUndo: null
+    current: null             /* 灯箱中的照片 */
   };
 
   var prefs = loadPrefs();
-  prefs.timer = prefs.timer || 0;
   state.filmIndex = filmIndexOf(prefs.film);
-  state.ev = Math.max(-6, Math.min(6, prefs.ev || 0));
+  state.ev = prefs.ev;
+
+  function clampInt(v, min, max, dflt) {
+    v = Math.round(Number(v));
+    if (!isFinite(v)) return dflt;
+    return Math.min(max, Math.max(min, v));
+  }
+
+  /* 本地存的偏好可能是旧版本/手工改过的脏值，读进来先收敛到可用范围 */
+  function normalizePrefs(p) {
+    if (typeof p.film !== 'string' || !p.film) p.film = 'PT-400';
+    p.ev = clampInt(p.ev, -6, 6, 0);
+    p.roll = clampInt(p.roll, 1, 9999, 1);
+
+    var frame = Math.round(Number(p.frame));
+    if (!isFinite(frame) || frame < 1) frame = 1;
+    if (frame > FRAMES_PER_ROLL) {
+      /* 旧数据停在“本卷已满但没来得及回卷”的状态：顺延到新卷 */
+      p.roll = Math.min(9999, p.roll + 1);
+      frame = 1;
+    }
+    p.frame = frame;
+
+    p.timer = Number(p.timer) === 3 || Number(p.timer) === 10 ? Number(p.timer) : 0;
+    p.flash = [0, 1, 2].indexOf(Number(p.flash)) >= 0 ? Number(p.flash) : 0;
+    p.grid = !!p.grid;
+    p.date = !!p.date;
+    p.sound = !!p.sound;
+    return p;
+  }
 
   function loadPrefs() {
     var d = { film: 'PT-400', ev: 0, grid: true, date: false, sound: true, timer: 0, flash: 0, roll: 1, frame: 1 };
@@ -52,7 +79,7 @@
         for (var k in d) if (p[k] !== undefined) d[k] = p[k];
       }
     } catch (e) { /* 忽略 */ }
-    return d;
+    return normalizePrefs(d);
   }
   function savePrefs() {
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* 忽略 */ }
@@ -217,7 +244,14 @@
   }
 
   /* ---------- 镜头 ---------- */
-  var camStart = null;   /* 同一时刻只允许一次镜头启动请求（手势重试与「重试」按钮可能同时触发） */
+  var camStart = null;    /* 同一时刻只允许一次镜头启动请求（手势重试与「重试」按钮可能同时触发） */
+  var camRetryOff = null; /* 已挂上的「碰一下页面就重试」监听；导入底片时立即摘掉 */
+
+  function stopStream(stream) {
+    if (!stream) return;
+    var tracks = stream.getTracks ? stream.getTracks() : [];
+    tracks.forEach(function (t) { t.stop(); });
+  }
 
   function startCamera(facing) {
     if (camStart) return camStart;
@@ -232,44 +266,76 @@
       /* 要 4:3（多数手机 CMOS 的原生比例），竖屏取景框就是它转 90°，几乎不用裁切 */
       video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1440 } }
     }).then(function (stream) {
+      /* 等到结果时用户已经导入了底片：这条流不能再顶掉他选好的画面 */
+      if (state.sourceLock) {
+        stopStream(stream);
+        return false;
+      }
       state.stream = stream;
       state.facing = facing;
       state.mirror = facing === 'user';
       state.source = 'camera';
       state.live = true;
-      state.camErr = null;
       el.video.srcObject = stream;
       el.video.style.display = 'block';
       el.still.hidden = true;
       setPressed('flip', state.facing === 'user');
+      bindTrackEnded(stream);
       hideNotice();
       layoutPreview();
       startVideo();
       /* 拿到流就是连上了。画面出得慢不能反过来判定成「未连接」 */
       return true;
     }).catch(function (err) {
-      state.camErr = err && err.name ? err.name : 'UnknownError';
       var why = err && err.name === 'NotAllowedError' ? '镜头权限被拒绝'
         : err && err.name === 'NotFoundError' ? '没有找到摄像头'
         : err && err.name === 'NotReadableError' ? '镜头被其他应用占用'
         : '无法访问镜头';
-      failCamera(why);
+      if (!state.sourceLock) failCamera(why);
       return false;
     }).then(function (v) { camStart = null; return v; },
             function (e) { camStart = null; throw e; });
     return camStart;
   }
 
+  /* 轨道被系统掐断（切走、权限回收、硬件异常）时给明确提示 */
+  var trackEnded = null;
+  function bindTrackEnded(stream) {
+    unbindTrackEnded();
+    trackEnded = function () {
+      trackEnded = null;
+      if (state.source !== 'camera') return;
+      state.stream = null;
+      state.live = false;
+      state.source = 'none';
+      el.video.srcObject = null;
+      showNotice('镜头连接已断开 · 点「重试」重新连接', 'empty');
+    };
+    var tracks = stream.getVideoTracks ? stream.getVideoTracks() : [];
+    tracks.forEach(function (t) { t.addEventListener('ended', trackEnded); });
+  }
+  function unbindTrackEnded() {
+    if (!trackEnded) return;
+    if (state.stream && state.stream.getVideoTracks) {
+      state.stream.getVideoTracks().forEach(function (t) {
+        t.removeEventListener('ended', trackEnded);
+      });
+    }
+    trackEnded = null;
+  }
+
   /* 连上镜头后画面可能还要缓一会儿（iPhone 上尤其明显）。出画了就把提示收干净；
      迟迟不出画只给一句准确的说明，不再反过来报「未连接」——那正是误报的来源 */
-  var videoTimer = null;
+  var videoTimer = null, videoReady = null;
   function startVideo() {
     var v = el.video;
     clearTimeout(videoTimer);
-    try {
-      var p = v.play();
-      if (p && p.catch) p.catch(function () { /* 自动播放被拦下也无妨 */ });
-    } catch (e) { /* 个别内核对 play() 同步抛错，忽略 */ }
+    if (videoReady) {
+      v.removeEventListener('loadedmetadata', videoReady);
+      v.removeEventListener('playing', videoReady);
+      videoReady = null;
+    }
+    resumeVideo();
 
     var painted = function () {
       if (state.source !== 'camera') return true;
@@ -277,11 +343,12 @@
       return false;
     };
     var onReady = function () {
-      if (painted()) {
-        v.removeEventListener('loadedmetadata', onReady);
-        v.removeEventListener('playing', onReady);
-      }
+      if (!painted()) return;
+      v.removeEventListener('loadedmetadata', onReady);
+      v.removeEventListener('playing', onReady);
+      if (videoReady === onReady) videoReady = null;
     };
+    videoReady = onReady;
     v.addEventListener('loadedmetadata', onReady);
     v.addEventListener('playing', onReady);
     videoTimer = setTimeout(function () {
@@ -290,30 +357,53 @@
     }, 6000);
   }
 
+  /* 切后台/来电后视频可能被系统暂停：回前台再播一次，不重复挂提示定时器 */
+  function resumeVideo() {
+    if (state.source !== 'camera' || !state.stream) return;
+    var v = el.video;
+    try {
+      var p = v.play();
+      if (p && p.catch) p.catch(function () { /* 自动播放被拦下也无妨 */ });
+    } catch (e) { /* 个别内核对 play() 同步抛错，忽略 */ }
+  }
+
   /* 手机浏览器（尤其 iOS Safari）要求摄像头调用发生在「用户手势」里，页面加载时的自动启动
      会被静默拒绝。各家的错误名还不统一（NotAllowedError / NotFoundError / SecurityError 都见
      过），所以任何失败都保留监听：用户一碰页面就立刻重试，最多补试 3 次；一旦连上镜头、或
      用户自己导入了底片，就摘掉监听——绝不顶掉他已经选好的画面 */
   function armCameraRetry() {
+    disarmCameraRetry();
     var left = 3;
     var detach = function () {
       document.removeEventListener('pointerdown', onGesture);
       document.removeEventListener('keydown', onGesture);
+      if (camRetryOff === detach) camRetryOff = null;
     };
     var onGesture = function () {
-      if (state.source === 'camera' || state.source === 'file') { detach(); return; }
+      if (state.source === 'camera' || state.source === 'file' || state.sourceLock) { detach(); return; }
       if (state.busy) return;
       if (left-- <= 0) { detach(); return; }
       startCamera(state.facing).then(function (ok) { if (ok) detach(); });
     };
+    camRetryOff = detach;
     document.addEventListener('pointerdown', onGesture);
     document.addEventListener('keydown', onGesture);
   }
 
+  function disarmCameraRetry() {
+    if (camRetryOff) camRetryOff();
+  }
+
   function stopCamera() {
     clearTimeout(videoTimer);
+    if (videoReady) {
+      el.video.removeEventListener('loadedmetadata', videoReady);
+      el.video.removeEventListener('playing', videoReady);
+      videoReady = null;
+    }
     if (state.stream) {
-      state.stream.getTracks().forEach(function (t) { t.stop(); });
+      unbindTrackEnded();
+      stopStream(state.stream);
       state.stream = null;
       if (state.source === 'camera') state.source = 'none';
     }
@@ -326,21 +416,29 @@
     if (!activeSource()) showNotice(why, 'empty');
   }
 
-  /* 把一张图片装进取景窗当底片用（画面始终由画布输出） */
+  /* 把一张图片装进取景窗当底片用（画面始终由画布输出）。
+     一旦导入就锁住图源并摘掉镜头重试，晚到的 getUserMedia 结果会被丢弃 */
   function loadSource(src) {
+    disarmCameraRetry();
+    state.sourceLock = true;
     stopCamera();
     state.mirror = false;
     el.video.style.display = 'none';
     el.still.hidden = true;
     el.still.onload = function () {
-      /* 图片还没解码完，镜头却先连上了：不能反过来把镜头画面顶掉 */
+      /* 用户自己已经切回镜头时，不要用图片顶掉镜头画面 */
       if (state.source === 'camera') return;
       state.source = 'file';
       state.dirty = true;
       hideNotice();
       layoutPreview();
     };
-    el.still.onerror = function () { state.source = 'none'; };
+    el.still.onerror = function () {
+      state.source = 'none';
+      state.sourceLock = false;
+      showNotice('底片读取失败 · 可以换一张图片，或重试镜头', 'empty');
+      toast('这张底片读不出来，请换一张图片');
+    };
     el.still.src = src;
   }
 
@@ -438,6 +536,8 @@
   /* ======================================================================
      快门
      ====================================================================== */
+  var countdownTimer = null;
+
   function shoot() {
     if (state.busy) return;
     if (state.rewinding) { toast('正在回卷，等新卷上好再拍'); return; }
@@ -449,18 +549,27 @@
     else captureShot();
   }
 
+  /* 回卷、打开灯箱等用户操作会取消还没触发的定时拍摄 */
+  function cancelCountdown() {
+    if (countdownTimer === null) return false;
+    clearInterval(countdownTimer);
+    countdownTimer = null;
+    el.countdown.hidden = true;
+    state.busy = false;
+    return true;
+  }
+
   function runCountdown(sec, done) {
+    cancelCountdown();
     state.busy = true;
     var n = sec;
     el.countdown.hidden = false;
     el.countdown.textContent = n;
     Sound.play('tick');
-    var iv = setInterval(function () {
+    countdownTimer = setInterval(function () {
       n--;
       if (n <= 0) {
-        clearInterval(iv);
-        el.countdown.hidden = true;
-        state.busy = false;
+        cancelCountdown();
         done();
       } else {
         el.countdown.textContent = n;
@@ -578,6 +687,7 @@
         seed: seed, dateStamp: prefs.date, flash: flashAmt
       });
       return toBlob(shot.canvas, 0.92).then(function (blob) {
+        if (!blob) throw new Error('jpeg-encode-failed');
         return makeThumb(shot.canvas, 240).then(function (thumb) {
           var frame = {
             id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
@@ -595,15 +705,19 @@
             date: prefs.date,
             ts: Date.now(),
             blob: blob,
-            thumb: thumb
+            thumb: thumb || blob
           };
-          return Store.add(frame).then(function () { return frame; });
+          return Store.add(frame).then(function () {
+            frame.persisted = Store.lastAddPersisted !== false;
+            return frame;
+          });
         });
       });
     }).then(function (frame) {
       state.busy = false;
       if (!frame) return;
-      toast('已冲印 ' + frame.code + ' · 第 ' + pad2(frame.frameNo) + ' 张');
+      toast('已冲印 ' + frame.code + ' · 第 ' + pad2(frame.frameNo) + ' 张' +
+        (frame.persisted === false ? ' · 存储不可用，仅本次会话' : ''));
       advanceFrame();
       refreshAlbum();
     }).catch(function () {
@@ -687,8 +801,13 @@
 
   function rewind(msg) {
     if (state.rewinding) return;
+    cancelCountdown();
     state.rewinding = true;
     el.shutter.disabled = true;
+    /* 先落盘新卷：1.85s 动画期间关页/刷新也不会重复上一张的编号 */
+    prefs.roll += 1;
+    prefs.frame = 1;
+    savePrefs();
     var knob = $('#rewind');
     knob.classList.remove('spinning');
     void knob.offsetWidth;
@@ -698,9 +817,6 @@
     el.counterDigits.textContent = '--';
     setTimeout(function () {
       knob.classList.remove('spinning');
-      prefs.roll += 1;
-      prefs.frame = 1;
-      savePrefs();
       updateCounter();
       state.rewinding = false;
       el.shutter.disabled = false;
@@ -833,6 +949,7 @@
   }
 
   function url(blob) {
+    if (!blob) return '';
     var u = URL.createObjectURL(blob);
     state.urls.push(u);
     return u;
@@ -842,51 +959,70 @@
     releaseUrls();
     var html = '';
     rows.forEach(function (r) {
+      var thumb = url(r.thumb);
+      var ratio = r.w && r.h ? r.w + '/' + r.h : '3/2';
       html +=
         '<li class="shot" data-id="' + r.id + '">' +
-        '<button class="shot-open" type="button" aria-label="查看第 ' + pad2(r.frameNo) + ' 张，' + r.code + '">' +
+        '<button class="shot-open" type="button" aria-label="查看第 ' + pad2(r.frameNo || 1) + ' 张，' + r.code + '">' +
         '<span class="shot-film">' +
         '<span class="shot-perf top" aria-hidden="true"></span>' +
-        '<img src="' + url(r.thumb) + '" alt="" loading="lazy" style="aspect-ratio:' + r.w + '/' + r.h + '">' +
+        (thumb ? '<img src="' + thumb + '" alt="" loading="lazy" style="aspect-ratio:' + ratio + '">' : '') +
         '<span class="shot-perf bottom" aria-hidden="true"></span>' +
         '</span>' +
-        '<span class="shot-meta"><b>' + pad2(r.frameNo) + '</b><span>' + r.code + '</span>' +
-        '<span>ROLL ' + pad2(r.roll) + '</span></span>' +
+        '<span class="shot-meta"><b>' + pad2(r.frameNo || 1) + '</b><span>' + r.code + '</span>' +
+        '<span>ROLL ' + pad2(r.roll || 1) + '</span></span>' +
         '</button></li>';
     });
     el.frames.innerHTML = html;
   }
 
   function setPeek(row) {
+    if (!row || !row.thumb) {
+      el.peekImg.hidden = true;
+      el.peekEmpty.hidden = false;
+      return;
+    }
     el.peekImg.src = url(row.thumb);
     el.peekImg.hidden = false;
     el.peekEmpty.hidden = true;
   }
 
+  var lbToken = 0;
   function openLightbox(id) {
-    var row = null;
-    for (var i = 0; i < state.shots.length; i++) if (state.shots[i].id === id) row = state.shots[i];
-    if (!row) return;
-    state.current = row;
-    el.lbImage.src = url(row.blob);
-    el.lbCode.textContent = row.code;
-    el.lbName.textContent = row.name + ' · ' + row.en;
-    var d = new Date(row.ts);
-    el.lbMeta.innerHTML =
-      '<dt>卷 / 张</dt><dd>ROLL ' + pad2(row.roll) + ' · #' + pad2(row.frameNo) + '</dd>' +
-      '<dt>乳剂</dt><dd>' + row.code + ' · ISO ' + row.iso + '</dd>' +
-      '<dt>曝光补偿</dt><dd>' + fmtEv(row.ev) + ' EV</dd>' +
-      '<dt>闪光</dt><dd>' + (row.flash ? (row.flashKind === 'torch' ? '已触发（LED）' : '已触发（屏幕）') : '未触发') + '</dd>' +
-      '<dt>冲印时间</dt><dd>' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
-      ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</dd>' +
-      '<dt>尺寸</dt><dd>' + row.w + ' × ' + row.h + '</dd>' +
-      '<dt>日期打印</dt><dd>' + (row.date ? '已开启' : '未开启') + '</dd>';
-    el.lightbox.showModal();
+    if (el.lightbox.open) return;
+    var found = null;
+    for (var i = 0; i < state.shots.length; i++) if (state.shots[i].id === id) found = state.shots[i];
+    if (!found) return;
+    cancelCountdown();
+    /* 列表里只有缩略图，原图在打开灯箱时再按 id 取 */
+    var token = ++lbToken;
+    Store.get(id).then(function (row) {
+      if (token !== lbToken || el.lightbox.open) return;
+      if (!row || !row.blob) { toast('这张底片读不出来，请刷新影集'); return; }
+      state.current = row;
+      el.lbImage.src = url(row.blob);
+      el.lbCode.textContent = row.code;
+      el.lbName.textContent = row.name + (row.en ? ' · ' + row.en : '');
+      var d = new Date(row.ts || Date.now());
+      var evText = typeof row.ev === 'number' ? fmtEv(row.ev) : '0.0';
+      el.lbMeta.innerHTML =
+        '<dt>卷 / 张</dt><dd>ROLL ' + pad2(row.roll || 1) + ' · #' + pad2(row.frameNo || 1) + '</dd>' +
+        '<dt>乳剂</dt><dd>' + row.code + ' · ISO ' + row.iso + '</dd>' +
+        '<dt>曝光补偿</dt><dd>' + evText + ' EV</dd>' +
+        '<dt>闪光</dt><dd>' + (row.flash ? (row.flashKind === 'torch' ? '已触发（LED）' : '已触发（屏幕）') : '未触发') + '</dd>' +
+        '<dt>冲印时间</dt><dd>' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+        ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</dd>' +
+        '<dt>尺寸</dt><dd>' + row.w + ' × ' + row.h + '</dd>' +
+        '<dt>日期打印</dt><dd>' + (row.date ? '已开启' : '未开启') + '</dd>';
+      el.lightbox.showModal();
+    }).catch(function () {
+      toast('这张底片读不出来，请刷新影集');
+    });
   }
 
   function saveCurrent() {
     var row = state.current;
-    if (!row) return;
+    if (!row || !row.blob) { toast('这张底片读不出来，请刷新影集'); return; }
     var name = 'SPOOLO_' + row.code + '_ROLL' + pad2(row.roll) + '_' + pad2(row.frameNo) + '.jpg';
     var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -968,17 +1104,33 @@
     }
     var r = new FileReader();
     r.onload = function () {
+      if (!r.result) { toast('这张图片读不出来，请换一张'); return; }
       loadSource(r.result);
       closeLab();
       toast('已装入「' + (file.name || '本地底片') + '」· 按下快门即可冲洗');
     };
-    r.readAsDataURL(file);
+    r.onerror = function () { toast('这张图片读不出来，请换一张'); };
+    try {
+      r.readAsDataURL(file);
+    } catch (e) {
+      toast('这张图片读不出来，请换一张');
+    }
   }
 
   /* ======================================================================
      暗房抽屉 / 标签页
      ====================================================================== */
   var isMobile = function () { return window.matchMedia('(max-width: 999px)').matches; };
+
+  /* 断点切回桌面时收起移动端抽屉，恢复页面滚动（否则 overflow:hidden 会一直留着） */
+  function syncViewportMode() {
+    if (isMobile()) return;
+    if (el.lab.classList.contains('open')) {
+      closeLab();
+    } else if (document.documentElement.style.overflow === 'hidden') {
+      document.documentElement.style.overflow = '';
+    }
+  }
 
   function openLab(tab) {
     if (tab) setTab(tab);
@@ -1004,6 +1156,8 @@
     var films = tab !== 'album';
     $('#tabFilms').setAttribute('aria-selected', films ? 'true' : 'false');
     $('#tabAlbum').setAttribute('aria-selected', films ? 'false' : 'true');
+    $('#tabFilms').tabIndex = films ? 0 : -1;
+    $('#tabAlbum').tabIndex = films ? -1 : 0;
     $('#panelFilms').hidden = !films;
     $('#panelAlbum').hidden = films;
   }
@@ -1011,7 +1165,7 @@
   /* ======================================================================
      Toast
      ====================================================================== */
-  var toastTimer = null, toastAction = null;
+  var toastTimer = null, toastHideTimer = null, toastAction = null;
   function toast(msg, actionLabel, action) {
     el.toastText.textContent = msg;
     toastAction = action || null;
@@ -1027,10 +1181,15 @@
       requestAnimationFrame(function () { el.toast.classList.add('show'); });
     });
     clearTimeout(toastTimer);
+    clearTimeout(toastHideTimer);
+    toastHideTimer = null;
     toastTimer = setTimeout(function () {
       el.toast.classList.remove('show');
       toastAction = null;
-      setTimeout(function () { el.toast.hidden = true; }, 240);
+      toastHideTimer = setTimeout(function () {
+        el.toast.hidden = true;
+        toastHideTimer = null;
+      }, 240);
     }, actionLabel ? 6000 : 2600);
   }
 
@@ -1150,6 +1309,8 @@
       if (!b) return;
       var act = b.dataset.act;
       if (act === 'flip') {
+        /* 用户主动要镜头：解除导入锁定，这次的 getUserMedia 结果可以生效 */
+        state.sourceLock = false;
         if (state.live) startCamera(state.facing === 'user' ? 'environment' : 'user');
         else startCamera(state.facing).then(function (ok) {
           if (!ok) toast('镜头没能启动 · 可以导入一张底片来冲洗');
@@ -1244,7 +1405,8 @@
 
     /* 胶卷旋钮 */
     var drag = null;
-    var STEP = Math.PI / 5;
+    /* 每档角度必须跟视觉刻度一致：n 卷时每档 360/n 度 */
+    var STEP = Math.PI * 2 / FILMS.length;
     el.rollKnob.addEventListener('pointerdown', function (e) {
       el.rollKnob.setPointerCapture(e.pointerId);
       drag = { a: angleOf(e), acc: 0, moved: 0, x: e.clientX, y: e.clientY };
@@ -1312,11 +1474,26 @@
     el.scrim.addEventListener('click', closeLab);
     $('#tabFilms').addEventListener('click', function () { setTab('films'); });
     $('#tabAlbum').addEventListener('click', function () { setTab('album'); });
+
+    /* 标签页键盘：左右 / Home / End 切换，焦点跟随（ARIA tabs 模式） */
+    $('.lab-tabs').addEventListener('keydown', function (e) {
+      var k = e.key;
+      if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Home' && k !== 'End') return;
+      e.preventDefault();
+      var tabs = [$('#tabFilms'), $('#tabAlbum')];
+      var cur = document.activeElement === tabs[1] ? 1 : 0;
+      var next = k === 'Home' ? 0 : k === 'End' ? 1 : cur === 0 ? 1 : 0;
+      setTab(next === 0 ? 'films' : 'album');
+      tabs[next].focus();
+    });
     $('#albumImport').addEventListener('click', pickFile);
     el.fileInput.addEventListener('change', function () {
       if (el.fileInput.files && el.fileInput.files[0]) onFile(el.fileInput.files[0]);
     });
-    $('#vfRetry').addEventListener('click', function () { startCamera(state.facing); });
+    $('#vfRetry').addEventListener('click', function () {
+      state.sourceLock = false;
+      startCamera(state.facing);
+    });
     $('#vfImport').addEventListener('click', pickFile);
 
     /* 灯箱 */
@@ -1330,12 +1507,23 @@
     });
 
     el.toastUndo.addEventListener('click', function () {
-      if (toastAction) { var fn = toastAction; toastAction = null; clearTimeout(toastTimer); el.toast.classList.remove('show'); el.toast.hidden = true; fn(); }
+      if (toastAction) {
+        var fn = toastAction;
+        toastAction = null;
+        clearTimeout(toastTimer);
+        clearTimeout(toastHideTimer);
+        toastHideTimer = null;
+        el.toast.classList.remove('show');
+        el.toast.hidden = true;
+        fn();
+      }
     });
 
-    /* 键盘快捷键 */
+    /* 键盘快捷键：带修饰键的组合留给浏览器，长按不重复触发 */
     document.addEventListener('keydown', function (e) {
-      if (e.target.matches('input, select, textarea')) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.repeat) return;
+      if (e.target && e.target.matches && e.target.matches('input, select, textarea')) return;
       if (el.lightbox.open) return;
       if (e.key === ' ' || e.key === 'Enter') {
         if (e.target === document.body || e.target === el.shutter) {
@@ -1354,13 +1542,25 @@
     var rt = null;
     window.addEventListener('resize', function () {
       clearTimeout(rt);
-      rt = setTimeout(layoutPreview, 180);
+      rt = setTimeout(function () {
+        syncViewportMode();
+        layoutPreview();
+      }, 180);
     });
-    window.addEventListener('orientationchange', function () { setTimeout(layoutPreview, 300); });
+    window.addEventListener('orientationchange', function () {
+      setTimeout(function () {
+        syncViewportMode();
+        layoutPreview();
+      }, 300);
+    });
 
     document.addEventListener('visibilitychange', function () {
       state.running = !document.hidden;
-      if (!document.hidden) { state.dirty = true; layoutPreview(); }
+      if (!document.hidden) {
+        state.dirty = true;
+        layoutPreview();
+        resumeVideo();
+      }
     });
   }
 
@@ -1375,7 +1575,6 @@
   function init() {
     renderFilmList();
     setFilm(state.filmIndex, { silent: true });
-    applyDateUi();
     el.frameBox.classList.toggle('show-grid', prefs.grid);
     setPressed('grid', prefs.grid);
     setPressed('date', prefs.date);
@@ -1385,6 +1584,7 @@
     el.timerVal.textContent = prefs.timer === 0 ? '关' : prefs.timer + 's';
     updateEv();
     updateCounter();
+    setTab('films');
 
     bindControls();
     refreshAlbum();
@@ -1393,14 +1593,14 @@
 
     startCamera(prefs.facing === 'user' ? 'user' : 'environment').then(function (ok) {
       if (ok) return;
+      /* 用户已经在导入底片（或已有画面）时不弹失败提示，也不再挂重试 */
+      if (state.source !== 'none' || state.sourceLock) return;
       toast(window.isSecureContext
         ? '镜头没能启动 · 点取景窗上的「导入底片」'
         : '手机浏览器只允许 HTTPS 调用镜头 · 也可以导入一张底片');
       armCameraRetry();
     });
   }
-
-  function applyDateUi() { /* 占位：日期打印只影响冲印时的水印 */ }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
