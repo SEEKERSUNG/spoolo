@@ -10,8 +10,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/base.css?v=1.11.8">
-<link rel="stylesheet" href="css/ui.css?v=1.11.8">
+<link rel="stylesheet" href="css/base.css?v=1.12.0">
+<link rel="stylesheet" href="css/ui.css?v=1.12.0">
 </head>
 <body>
 <div class="room" aria-hidden="true"></div>
@@ -34,7 +34,7 @@
           <span class="maker-name">SPOOLO</span>
           <span class="maker-sub">135 FORMAT · MODEL 35S</span>
           <span class="maker-meta">
-            <span>v1.11.8</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
+            <span>v1.12.0</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
           </span>
         </div>
 
@@ -217,6 +217,13 @@
       <div class="album-head">
         <p class="album-stat" id="albumStat">还没有冲洗出照片</p>
         <button class="chip" id="albumImport" type="button">导入底片</button>
+        <button class="chip" id="albumManage" type="button" aria-pressed="false">管理</button>
+      </div>
+      <div class="album-batch" id="albumBatch" hidden>
+        <span class="batch-count" id="batchCount">已选 0 张</span>
+        <button class="chip" id="batchAll" type="button">全选</button>
+        <button class="chip" id="batchSave" type="button" disabled>保存所选</button>
+        <button class="chip danger" id="batchDelete" type="button" disabled>删除所选</button>
       </div>
       <div class="negatives" id="negatives">
         <p class="panel-note">没有镜头也可以玩：导入一张底片，按快门就能走完整个冲印流程。</p>
@@ -225,7 +232,7 @@
     </div>
 
     <p class="lab-foot">
-      <b>SPOOLO</b> v1.11.8<span>·</span>135 胶片相机
+      <b>SPOOLO</b> v1.12.0<span>·</span>135 胶片相机
       <a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
     </p>
   </aside>
@@ -276,9 +283,10 @@
 
 <input type="file" id="fileInput" class="file-input" accept="image/*" tabindex="-1" aria-hidden="true">
 
-<script src="js/films.js?v=1.11.8"></script>
-<script src="js/store.js?v=1.11.8"></script>
-<script src="js/gpu-develop.js?v=1.11.8"></script>
-<script src="js/app.js?v=1.11.8"></script>
+<script src="js/films.js?v=1.12.0"></script>
+<script src="js/store.js?v=1.12.0"></script>
+<script src="js/gpu-develop.js?v=1.12.0"></script>
+<script src="js/zip.js?v=1.12.0"></script>
+<script src="js/app.js?v=1.12.0"></script>
 </body>
 </html>

@@ -23,6 +23,10 @@
 }
 .chip:hover { color: var(--txt); border-color: oklch(100% 0 0 / 0.26); }
 .chip:active { transform: translateY(1px); }
+.chip:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
+.chip[aria-pressed="true"] { color: var(--txt); border-color: oklch(80% 0.16 68 / 0.5); }
+.chip.danger { color: oklch(80% 0.14 30); border-color: oklch(56% 0.15 30 / 0.45); }
+.chip.danger:hover { color: oklch(86% 0.14 30); border-color: oklch(70% 0.15 30 / 0.65); }
 .chip-icon {
   width: 15px;
   height: 15px;
@@ -660,6 +664,29 @@
   color: var(--txt-3);
   font-variant-numeric: tabular-nums;
 }
+.album-batch {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -14px -14px 12px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, oklch(22% 0.008 70 / 0.97), oklch(19% 0.008 70 / 0.97));
+  border-bottom: 1px solid oklch(100% 0 0 / 0.08);
+  box-shadow: 0 8px 16px -14px oklch(0% 0 0 / 0.9);
+  backdrop-filter: blur(8px);
+}
+.album-batch[hidden] { display: none; }
+.album-batch .chip { min-height: 34px; padding: 6px 10px; font-size: 11px; }
+.batch-count {
+  margin-right: auto;
+  font: 500 11px/1.2 var(--font-mono);
+  color: var(--txt-2);
+  font-variant-numeric: tabular-nums;
+}
 .negatives { margin-bottom: 16px; }
 .negatives[hidden] { display: none; }
 
@@ -685,6 +712,7 @@
   to { opacity: 1; transform: none; }
 }
 .shot-open {
+  position: relative;
   display: block;
   width: 100%;
   padding: 0;
@@ -693,6 +721,34 @@
   cursor: pointer;
   text-align: left;
 }
+.shot-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid oklch(100% 0 0 / 0.55);
+  background: oklch(10% 0.01 60 / 0.55);
+  color: oklch(20% 0.03 60);
+  font: 600 13px/1 var(--font-sans);
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+.frames.is-managing .shot-check { display: grid; }
+.shot.is-selected .shot-check {
+  background: var(--amber);
+  border-color: var(--amber);
+  box-shadow: 0 0 0 1px oklch(0% 0 0 / 0.35), 0 0 10px -2px oklch(80% 0.16 68 / 0.8);
+}
+.shot.is-selected .shot-check::after { content: '✓'; }
+.shot.is-selected .shot-film {
+  box-shadow: 0 0 0 2px var(--amber), 0 8px 20px -12px oklch(0% 0 0 / 1);
+}
+.shot.is-selected .shot-meta b { color: var(--amber); }
 .shot-film {
   position: relative;
   display: block;

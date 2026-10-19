@@ -36,7 +36,9 @@
     previewPixels: 180000,
     shots: [],
     urls: [],
-    current: null             /* 灯箱中的照片 */
+    current: null,            /* 灯箱中的照片 */
+    managing: false,
+    selected: Object.create(null)
   };
 
   var prefs = loadPrefs();
@@ -126,6 +128,12 @@
     filmList: $('#filmList'),
     negatives: $('#negatives'),
     albumStat: $('#albumStat'),
+    albumManage: $('#albumManage'),
+    albumBatch: $('#albumBatch'),
+    batchCount: $('#batchCount'),
+    batchAll: $('#batchAll'),
+    batchSave: $('#batchSave'),
+    batchDelete: $('#batchDelete'),
     lightbox: $('#lightbox'),
     lbImage: $('#lbImage'),
     lbCode: $('#lbCode'),
@@ -1144,6 +1152,17 @@
      ====================================================================== */
   function paintAlbum(rows) {
     state.shots = rows;
+    if (!rows.length && state.managing) {
+      state.managing = false;
+      state.selected = Object.create(null);
+    }
+    if (state.managing) {
+      var ids = Object.create(null);
+      rows.forEach(function (r) { ids[r.id] = 1; });
+      Object.keys(state.selected).forEach(function (id) {
+        if (!ids[id]) delete state.selected[id];
+      });
+    }
     renderFrames(rows);
     $('#albumBadge').textContent = String(rows.length);
     el.negatives.hidden = rows.length > 0;
@@ -1163,6 +1182,8 @@
       el.peekImg.hidden = true;
       el.peekEmpty.hidden = false;
     }
+    el.albumManage.disabled = rows.length === 0;
+    updateBatchUi();
   }
 
   function refreshAlbum() {
@@ -1209,13 +1230,17 @@
 
   function renderFrames(rows) {
     releaseUrls();
+    el.frames.classList.toggle('is-managing', state.managing);
     var html = '';
     rows.forEach(function (r) {
       var thumb = url(r.thumb);
       var ratio = r.w && r.h ? r.w + '/' + r.h : '3/2';
+      var sel = !!state.selected[r.id];
+      var label = (state.managing ? '选择第 ' : '查看第 ') + pad2(r.frameNo || 1) + ' 张，' + r.code;
       html +=
-        '<li class="shot" data-id="' + r.id + '">' +
-        '<button class="shot-open" type="button" aria-label="查看第 ' + pad2(r.frameNo || 1) + ' 张，' + r.code + '">' +
+        '<li class="shot' + (sel ? ' is-selected' : '') + '" data-id="' + r.id + '">' +
+        '<button class="shot-open" type="button" aria-label="' + label + '"' +
+        (state.managing ? ' aria-pressed="' + (sel ? 'true' : 'false') + '"' : '') + '>' +
         '<span class="shot-film">' +
         '<span class="shot-perf top" aria-hidden="true"></span>' +
         (thumb ? '<img src="' + thumb + '" alt="" loading="lazy" style="aspect-ratio:' + ratio + '">' : '') +
@@ -1223,9 +1248,193 @@
         '</span>' +
         '<span class="shot-meta"><b>' + pad2(r.frameNo || 1) + '</b><span>' + r.code + '</span>' +
         '<span>ROLL ' + pad2(r.roll || 1) + '</span></span>' +
+        '<span class="shot-check" aria-hidden="true"></span>' +
         '</button></li>';
     });
     el.frames.innerHTML = html;
+  }
+
+  /* ---------- 批量管理 ---------- */
+  function selectedIds() {
+    var out = [];
+    state.shots.forEach(function (r) { if (state.selected[r.id]) out.push(r.id); });
+    return out;
+  }
+
+  function selectedRows() {
+    return state.shots.filter(function (r) { return !!state.selected[r.id]; });
+  }
+
+  function updateBatchUi() {
+    var n = selectedIds().length;
+    var total = state.shots.length;
+    if (el.batchCount) el.batchCount.textContent = '已选 ' + n + ' 张';
+    if (el.batchSave) el.batchSave.disabled = n === 0;
+    if (el.batchDelete) el.batchDelete.disabled = n === 0;
+    if (el.batchAll) {
+      el.batchAll.textContent = total > 0 && n === total ? '取消全选' : '全选';
+      el.batchAll.disabled = total === 0;
+    }
+    if (el.albumBatch) el.albumBatch.hidden = !state.managing;
+    if (el.albumManage) {
+      el.albumManage.textContent = state.managing ? '完成' : '管理';
+      el.albumManage.setAttribute('aria-pressed', state.managing ? 'true' : 'false');
+    }
+  }
+
+  function setManaging(on) {
+    state.managing = !!on;
+    state.selected = Object.create(null);
+    renderFrames(state.shots);
+    updateBatchUi();
+  }
+
+  function toggleSelect(id) {
+    if (!state.managing) return;
+    if (state.selected[id]) delete state.selected[id];
+    else state.selected[id] = 1;
+    var li = el.frames.querySelector('.shot[data-id="' + id + '"]');
+    if (li) {
+      var sel = !!state.selected[id];
+      li.classList.toggle('is-selected', sel);
+      var b = li.querySelector('.shot-open');
+      if (b) b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+    }
+    updateBatchUi();
+  }
+
+  function toggleAll() {
+    var total = state.shots.length;
+    var n = selectedIds().length;
+    var all = total > 0 && n === total;
+    state.selected = Object.create(null);
+    if (!all) state.shots.forEach(function (r) { state.selected[r.id] = 1; });
+    renderFrames(state.shots);
+    updateBatchUi();
+  }
+
+  function frameFileName(row) {
+    return 'SPOOLO_' + row.code + '_ROLL' + pad2(row.roll || 1) + '_' + pad2(row.frameNo || 1) + '.jpg';
+  }
+
+  function mobileShare() {
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  }
+
+  function downloadBlob(blob, name) {
+    var u = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = u;
+    a.download = name;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { a.remove(); URL.revokeObjectURL(u); }, 60000);
+  }
+
+  function zipAndSave(files) {
+    if (!S.zipFiles) {
+      files.forEach(function (f, i) {
+        setTimeout(function () { downloadBlob(f.blob, f.name); }, i * 350);
+      });
+      toast('已开始保存 ' + files.length + ' 张');
+      return;
+    }
+    toast('正在打包 ' + files.length + ' 张…');
+    S.zipFiles(files).then(function (zip) {
+      var name = 'SPOOLO_selected_' + Date.now() + '.zip';
+      var zf = null;
+      try { zf = new File([zip], name, { type: 'application/zip' }); } catch (e) { zf = null; }
+      var can = false;
+      if (mobileShare() && zf && navigator.share && navigator.canShare) {
+        try { can = navigator.canShare({ files: [zf] }); } catch (e) { can = false; }
+      }
+      if (can) {
+        navigator.share({ files: [zf], title: 'SPOOLO' }).then(function () {
+          toast('已打开保存菜单');
+        }).catch(function (err) {
+          if (err && err.name === 'AbortError') return;
+          downloadBlob(zip, name);
+          toast('已打包 ' + files.length + ' 张');
+        });
+        return;
+      }
+      downloadBlob(zip, name);
+      toast('已打包 ' + files.length + ' 张');
+    }).catch(function () {
+      toast('打包失败，请分批保存');
+    });
+  }
+
+  function tryShare(files, shareFiles) {
+    navigator.share({ files: shareFiles, title: 'SPOOLO' }).then(function () {
+      toast('已打开保存菜单');
+    }).catch(function (err) {
+      if (err && err.name === 'AbortError') return;
+      if (err && err.name === 'NotAllowedError') {
+        /* 异步读库后手势可能失效：给一个可再次点击的保存入口 */
+        toast('已准备好 ' + files.length + ' 张', '保存', function () {
+          tryShare(files, shareFiles);
+        });
+        return;
+      }
+      zipAndSave(files);
+    });
+  }
+
+  function batchSave() {
+    var rows = selectedRows();
+    if (!rows.length) return;
+    toast('正在准备 ' + rows.length + ' 张…');
+    Promise.all(rows.map(function (r) {
+      return Store.get(r.id).then(function (full) {
+        return full && full.blob ? { name: frameFileName(full), blob: full.blob } : null;
+      }).catch(function () { return null; });
+    })).then(function (list) {
+      var files = list.filter(Boolean);
+      if (!files.length) { toast('所选底片读不出来'); return; }
+      var shareFiles = [];
+      try {
+        files.forEach(function (f) { shareFiles.push(new File([f.blob], f.name, { type: 'image/jpeg' })); });
+      } catch (e) { shareFiles = []; }
+      var can = false;
+      if (mobileShare() && shareFiles.length && navigator.share && navigator.canShare) {
+        try { can = navigator.canShare({ files: shareFiles }); } catch (e) { can = false; }
+      }
+      if (can) tryShare(files, shareFiles);
+      else zipAndSave(files);
+    });
+  }
+
+  function batchDelete() {
+    var rows = selectedRows();
+    if (!rows.length) return;
+    if (!window.confirm('删除所选的 ' + rows.length + ' 张底片？')) return;
+
+    var ids = Object.create(null);
+    rows.forEach(function (r) { ids[r.id] = 1; });
+    state.selected = Object.create(null);
+    paintAlbum(state.shots.filter(function (r) { return !ids[r.id]; }));
+
+    /* 和单张删除一样：先复制独立 Blob，再删库；撤销写回副本 */
+    var copiesP = Promise.all(rows.map(function (r) {
+      return Store.get(r.id).then(function (full) {
+        return full ? copyFrame(full) : null;
+      }).catch(function () { return null; });
+    })).then(function (list) {
+      var copies = list.filter(Boolean);
+      return Promise.all(copies.map(function (c) {
+        return Store.remove(c.id).then(function () { return c; }).catch(function () { return null; });
+      })).then(function () { return copies; });
+    });
+    copiesP.catch(function () { refreshAlbum(); });
+
+    toast('已删除 ' + rows.length + ' 张', '撤销', function () {
+      copiesP.then(function (copies) {
+        return Promise.all(copies.map(function (c) { return Store.add(c); }));
+      }).then(refreshAlbum).catch(function () { toast('撤销失败，请重试'); });
+    });
   }
 
   function setPeek(row) {
@@ -1752,7 +1961,9 @@
     el.frames.addEventListener('click', function (e) {
       var b = e.target.closest('.shot-open');
       if (!b) return;
-      openLightbox(b.closest('.shot').dataset.id);
+      var id = b.closest('.shot').dataset.id;
+      if (state.managing) { toggleSelect(id); return; }
+      openLightbox(id);
     });
 
     $('#peek').addEventListener('click', function () { openLab('album'); });
@@ -1774,6 +1985,10 @@
       tabs[next].focus();
     });
     $('#albumImport').addEventListener('click', pickFile);
+    el.albumManage.addEventListener('click', function () { setManaging(!state.managing); });
+    el.batchAll.addEventListener('click', toggleAll);
+    el.batchSave.addEventListener('click', batchSave);
+    el.batchDelete.addEventListener('click', batchDelete);
     el.fileInput.addEventListener('change', function () {
       if (el.fileInput.files && el.fileInput.files[0]) onFile(el.fileInput.files[0]);
     });
