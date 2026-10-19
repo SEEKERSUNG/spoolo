@@ -1,5 +1,5 @@
 /* ==========================================================================
-   SPOOLO · 胶卷引擎 (film ststock engine)
+   SPOOLO · 胶卷引擎 (film stock engine)
    - 每种胶卷用「缩写代号」命名，仿色自经典乳剂，但不直接使用其商标名
    - 色彩科学：分通道 LUT 曲线 + 饱和/鲜艳度 + 阴影高光分离调色
    - 颗粒 / 光晕(halation) / 暗角 / 漏光 实时合成
@@ -145,10 +145,12 @@
     return s + (1 - s) * Math.tanh((y - s) / (1 - s));
   }
 
-  function curve(x, contrast, lift, gamma, gain) {
+  /* shoulder 为高光肩部起点（每种乳剂自带，0.66–0.82）：数值越大，高光越亮、
+     滚降越晚。全部曲线共用这一入口，不再写死 0.70 */
+  function curve(x, contrast, lift, gamma, gain, shoulder) {
     var y = (x - 0.5) * contrast + 0.5 + lift;
     if (y < 0) y = 0;
-    y = softClip(y, 0.70);
+    y = softClip(y, shoulder);
     if (gamma !== 1) y = Math.pow(y, gamma);
     y = y * gain;
     return y < 0 ? 0 : y > 1 ? 1 : y;
@@ -165,15 +167,17 @@
     var expo = Math.pow(2, ev);
     var lut = new Uint8ClampedArray(768);
     var mono = film.bw ? new Uint8ClampedArray(256) : null;
+    /* 老预设若没写 shoulder，仍按原来的 0.70 兜底 */
+    var shoulder = film.shoulder > 0 && film.shoulder < 1 ? film.shoulder : 0.70;
 
     for (var i = 0; i < 256; i++) {
       var x = (i / 255) * expo;
       if (film.bw) {
-        mono[i] = curve(x, film.contrast, film.lift, film.gamma, film.gain) * 255;
+        mono[i] = curve(x, film.contrast, film.lift, film.gamma, film.gain, shoulder) * 255;
       } else {
-        lut[i] = curve(x, film.contrast[0], film.lift[0], film.gamma[0], film.gain[0]) * 255;
-        lut[i + 256] = curve(x, film.contrast[1], film.lift[1], film.gamma[1], film.gain[1]) * 255;
-        lut[i + 512] = curve(x, film.contrast[2], film.lift[2], film.gamma[2], film.gain[2]) * 255;
+        lut[i] = curve(x, film.contrast[0], film.lift[0], film.gamma[0], film.gain[0], shoulder) * 255;
+        lut[i + 256] = curve(x, film.contrast[1], film.lift[1], film.gamma[1], film.gain[1], shoulder) * 255;
+        lut[i + 512] = curve(x, film.contrast[2], film.lift[2], film.gamma[2], film.gain[2], shoulder) * 255;
       }
     }
     var out = { lut: lut, mono: mono };

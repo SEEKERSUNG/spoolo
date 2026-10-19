@@ -28,6 +28,7 @@
     source: 'none',           /* camera | file | none */
     camErr: null,             /* 最近一次镜头启动失败的错误名 */
     busy: false,
+    rewinding: false,         /* 回卷动画期间不接受新的快门 */
     dirty: true,
     running: true,
     previewPixels: 90000,
@@ -386,6 +387,7 @@
     el.rollKnob.setAttribute('aria-valuetext', f.code + ' ' + f.name);
     el.rollKnob.style.setProperty('--rot', (i * 36) + 'deg');
     applyFilmVars(f);
+    updateEdgeCode();
     refreshPreview();
 
     var m = S.meters(f);
@@ -436,6 +438,7 @@
      ====================================================================== */
   function shoot() {
     if (state.busy) return;
+    if (state.rewinding) { toast('正在回卷，等新卷上好再拍'); return; }
     if (!activeSource()) {
       toast('还没有画面：先允许镜头，或导入一张底片');
       return;
@@ -523,6 +526,7 @@
 
   function captureShot() {
     if (state.busy) return;
+    if (state.rewinding) { toast('正在回卷，等新卷上好再拍'); return; }
     state.busy = true;
     var film = currentFilm();
     var flash = flashShouldFire();
@@ -680,6 +684,9 @@
   }
 
   function rewind(msg) {
+    if (state.rewinding) return;
+    state.rewinding = true;
+    el.shutter.disabled = true;
     var knob = $('#rewind');
     knob.classList.remove('spinning');
     void knob.offsetWidth;
@@ -693,17 +700,25 @@
       prefs.frame = 1;
       savePrefs();
       updateCounter();
+      state.rewinding = false;
+      el.shutter.disabled = false;
       if (msg) toast('已装上新卷 · ROLL ' + pad2(prefs.roll));
     }, 1850);
+  }
+
+  /* 齿孔边码跟着当前胶卷与张数走：换卷时也要立刻刷新，不能等下一张 */
+  function updateEdgeCode() {
+    var left = $$('.edge-code');
+    var iso = currentFilm().iso;
+    if (left[0]) left[0].textContent = 'SPOOLO 135 · ' + iso + ' · ' + pad2(prefs.frame);
+    if (left[1]) left[1].textContent = pad2(prefs.frame) + ' → SPOOLO ' + iso;
   }
 
   function updateCounter() {
     el.counterDigits.textContent = pad2(prefs.frame);
     el.rollNo.textContent = pad2(prefs.roll);
     el.roLeft.textContent = Math.max(0, FRAMES_PER_ROLL - prefs.frame + 1);
-    var left = $$('.edge-code');
-    if (left[0]) left[0].textContent = 'SPOOLO 135 · ' + currentFilm().iso + ' · ' + pad2(prefs.frame);
-    if (left[1]) left[1].textContent = pad2(prefs.frame) + ' → SPOOLO ' + currentFilm().iso;
+    updateEdgeCode();
   }
 
   /* ======================================================================
@@ -765,7 +780,11 @@
     if (!rows.length) {
       el.albumStat.textContent = '还没有冲洗出照片';
     } else {
-      var rolls = 1 + Math.max.apply(null, rows.map(function (r) { return r.roll; })) - Math.min.apply(null, rows.map(function (r) { return r.roll; }));
+      /* 按实际出现过的卷号统计：手动回卷后卷号可能不连续，不能再用 max−min+1 */
+      var rolls = 0, seenRolls = {};
+      rows.forEach(function (r) {
+        if (!seenRolls[r.roll]) { seenRolls[r.roll] = 1; rolls += 1; }
+      });
       el.albumStat.textContent = '共 ' + rows.length + ' 张 · ' + rolls + ' 卷';
     }
     if (rows.length) {

@@ -38,8 +38,6 @@
   }
 
   var Store = {
-    available: function () { return !useMemory; },
-
     add: function (frame) {
       if (useMemory) {
         memory.unshift(frame);
@@ -66,35 +64,12 @@
       }).catch(function () { useMemory = true; return memory.slice(); });
     },
 
-    get: function (id) {
-      if (useMemory) {
-        for (var i = 0; i < memory.length; i++) if (memory[i].id === id) return Promise.resolve(memory[i]);
-        return Promise.resolve(null);
-      }
-      return tx('readonly', function (os) { return os.get(id); });
-    },
-
     remove: function (id) {
       if (useMemory) {
         memory = memory.filter(function (f) { return f.id !== id; });
         return Promise.resolve();
       }
       return tx('readwrite', function (os) { os.delete(id); });
-    },
-
-    clear: function () {
-      if (useMemory) { memory = []; return Promise.resolve(); }
-      return tx('readwrite', function (os) { os.clear(); });
-    },
-
-    /* 估算已占用空间（字节） */
-    estimate: function () {
-      if (navigator.storage && navigator.storage.estimate) {
-        return navigator.storage.estimate().then(function (e) {
-          return { usage: e.usage || 0, quota: e.quota || 0 };
-        }).catch(function () { return null; });
-      }
-      return Promise.resolve(null);
     }
   };
 

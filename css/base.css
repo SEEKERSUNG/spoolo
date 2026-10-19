@@ -606,9 +606,6 @@ button, input, select { font: inherit; color: inherit; }
 }
 #cam, #preview { display: block; }
 #still { object-position: center; }
-.frame.is-mirrored #cam,
-.frame.is-mirrored #preview,
-.frame.is-mirrored #still { transform: scaleX(-1); }
 
 .fx { position: absolute; inset: 0; pointer-events: none; }
 .fx.vignette {
