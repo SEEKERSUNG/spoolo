@@ -1121,6 +1121,21 @@
      暗房抽屉 / 标签页
      ====================================================================== */
   var isMobile = function () { return window.matchMedia('(max-width: 999px)').matches; };
+  var labReturnFocus = null;
+
+  /* 抽屉打开时把机身与跳转链接设为 inert：键盘/读屏都不会跑到背景 */
+  function setLabInert(on) {
+    var cam = $('.camera');
+    if (cam) cam.inert = !!on;
+    var skip = $('.skip');
+    if (skip) skip.inert = !!on;
+  }
+
+  function labFocusables() {
+    return $$('#lab button, #lab a[href], #lab [tabindex="0"]').filter(function (n) {
+      return !n.disabled && n.getClientRects().length > 0;
+    });
+  }
 
   /* 断点切回桌面时收起移动端抽屉，恢复页面滚动（否则 overflow:hidden 会一直留着） */
   function syncViewportMode() {
@@ -1135,17 +1150,37 @@
   function openLab(tab) {
     if (tab) setTab(tab);
     if (!isMobile()) return;
+    var wasOpen = el.lab.classList.contains('open');
+    if (!wasOpen) labReturnFocus = document.activeElement;
     el.lab.classList.add('open');
     el.scrim.hidden = false;
     requestAnimationFrame(function () { el.scrim.classList.add('show'); });
     document.documentElement.style.overflow = 'hidden';
+    var target = tab === 'album' ? $('#tabAlbum') : $('#tabFilms');
+    if (target) {
+      /* 抽屉有滑入过渡，未完成前 focus 会被拒绝；反复尝试直到焦点进入抽屉 */
+      var tries = 0;
+      (function focusTarget() {
+        if (!el.lab.classList.contains('open')) return;
+        try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+        if (el.lab.contains(document.activeElement) || ++tries > 25) return;
+        setTimeout(focusTarget, 40);
+      })();
+    }
+    if (!wasOpen) setLabInert(true);
   }
 
   function closeLab() {
-    if (!el.lab.classList.contains('open')) return;
+    if (!el.lab.classList.contains('open')) { setLabInert(false); return; }
     el.lab.classList.remove('open');
     el.scrim.classList.remove('show');
     document.documentElement.style.overflow = '';
+    setLabInert(false);
+    var target = labReturnFocus;
+    labReturnFocus = null;
+    if (target && target.focus) {
+      try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+    }
     setTimeout(function () {
       if (!el.lab.classList.contains('open')) el.scrim.hidden = true;
     }, 340);
@@ -1516,6 +1551,24 @@
         el.toast.classList.remove('show');
         el.toast.hidden = true;
         fn();
+      }
+    });
+
+    /* 移动端抽屉打开时：Tab 焦点在抽屉内循环，配合背景 inert 不逃逸 */
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Tab') return;
+      if (!isMobile() || !el.lab.classList.contains('open')) return;
+      var nodes = labFocusables();
+      if (!nodes.length) return;
+      var first = nodes[0], last = nodes[nodes.length - 1], a = document.activeElement;
+      if (e.shiftKey) {
+        if (a === first || !el.lab.contains(a)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (a === last || !el.lab.contains(a)) {
+        e.preventDefault();
+        first.focus();
       }
     });
 

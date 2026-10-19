@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#17140f">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <title>SPOOLO · 一台网页里的胶片相机</title>
 <meta name="description" content="SPOOLO 是一台跑在浏览器里的 135 胶片相机：实时仿色胶卷、机械快门手感、颗粒与光晕、暗房冲印。">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/base.css?v=1.11.1">
-<link rel="stylesheet" href="css/ui.css?v=1.11.1">
+<link rel="stylesheet" href="css/base.css?v=1.11.2">
+<link rel="stylesheet" href="css/ui.css?v=1.11.2">
 </head>
 <body>
 <div class="room" aria-hidden="true"></div>
@@ -33,7 +34,7 @@
           <span class="maker-name">SPOOLO</span>
           <span class="maker-sub">135 FORMAT · MODEL 35S</span>
           <span class="maker-meta">
-            <span>v1.11.1</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
+            <span>v1.11.2</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
           </span>
         </div>
 
@@ -224,7 +225,7 @@
     </div>
 
     <p class="lab-foot">
-      <b>SPOOLO</b> v1.11.1<span>·</span>135 胶片相机
+      <b>SPOOLO</b> v1.11.2<span>·</span>135 胶片相机
       <a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
     </p>
   </aside>
@@ -273,10 +274,10 @@
   <button type="button" id="toastUndo" hidden>撤销</button>
 </div>
 
-<input type="file" id="fileInput" class="file-input" accept="image/*">
+<input type="file" id="fileInput" class="file-input" accept="image/*" tabindex="-1" aria-hidden="true">
 
-<script src="js/films.js?v=1.11.1"></script>
-<script src="js/store.js?v=1.11.1"></script>
-<script src="js/app.js?v=1.11.1"></script>
+<script src="js/films.js?v=1.11.2"></script>
+<script src="js/store.js?v=1.11.2"></script>
+<script src="js/app.js?v=1.11.2"></script>
 </body>
 </html>
