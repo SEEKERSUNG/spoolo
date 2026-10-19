@@ -82,12 +82,11 @@
 
   var COMP_FS = PRECISION + [
     'varying vec2 vUv;',
-    'uniform sampler2D uColor, uMask;',
-    'uniform vec2 uRes;',
-    'uniform float uHalo, uGrain, uGrainShadow, uGrainSize, uSeed;',
+    'uniform sampler2D uColor, uMask, uNoise;',
+    'uniform vec2 uRes, uNoiseOff;',
+    'uniform float uHalo, uGrain, uGrainShadow, uGrainSize;',
     'uniform float uVig, uLeak, uLeakTop, uLeakBot, uFlash;',
     'uniform vec3 uHaloColor;',
-    'float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y) * 2.0 - 1.0; }',
     'void main(){',
     '  vec3 c = texture2D(uColor, vUv).rgb;',
     '  vec2 px = vUv * uRes;',
@@ -97,8 +96,10 @@
     '  float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));',
     '  float ga = uGrain * (1.0 + uGrainShadow * (1.0 - lum));',
     '  vec2 gp = floor(px / uGrainSize);',
-    '  float n1 = hash(gp + vec2(uSeed, uSeed * 0.7));',
-    '  float n2 = hash(gp + vec2(uSeed + 53.0, uSeed * 0.7 + 97.0));',
+    '  vec3 nA = texture2D(uNoise, (gp + uNoiseOff) * (1.0 / 512.0)).rgb;',
+    '  vec3 nB = texture2D(uNoise, (gp * 0.61 + uNoiseOff.yx + 17.0) * (1.0 / 512.0)).rgb;',
+    '  float n1 = nA.r * 2.0 - 1.0;',
+    '  float n2 = (nA.b * 0.65 + nB.g * 0.35) * 2.0 - 1.0;',
     '  c.r += n1 * ga;',
     '  c.g += (n1 * 0.62 + n2 * 0.38) * ga;',
     '  c.b += n2 * ga;',
@@ -194,13 +195,14 @@
       comp: {
         color: gl.getUniformLocation(compP, 'uColor'),
         mask: gl.getUniformLocation(compP, 'uMask'),
+        noise: gl.getUniformLocation(compP, 'uNoise'),
         res: gl.getUniformLocation(compP, 'uRes'),
+        noiseOff: gl.getUniformLocation(compP, 'uNoiseOff'),
         halo: gl.getUniformLocation(compP, 'uHalo'),
         haloColor: gl.getUniformLocation(compP, 'uHaloColor'),
         grain: gl.getUniformLocation(compP, 'uGrain'),
         grainShadow: gl.getUniformLocation(compP, 'uGrainShadow'),
         grainSize: gl.getUniformLocation(compP, 'uGrainSize'),
-        seed: gl.getUniformLocation(compP, 'uSeed'),
         vig: gl.getUniformLocation(compP, 'uVig'),
         leak: gl.getUniformLocation(compP, 'uLeak'),
         leakTop: gl.getUniformLocation(compP, 'uLeakTop'),
@@ -229,12 +231,45 @@
     gl.useProgram(compP);
     gl.uniform1i(U.comp.color, 0);
     gl.uniform1i(U.comp.mask, 1);
+    gl.uniform1i(U.comp.noise, 2);
 
     var W = 0, H = 0, HW = 0, HH = 0;
-    var srcTex = null, lutTex = null;
+    var srcTex = null, lutTex = null, noiseTex = null;
     var colorT = null, colorFbo = null;
     var maskA = null, maskAFbo = null;
     var maskB = null, maskBFbo = null;
+
+    /* CPU 生成的噪声纹理：比浮点 hash 稳定，不会在大坐标上出现周期网格 */
+    function hashNoise(x, y, seed) {
+      var n = Math.imul(x, 1619) ^ Math.imul(y, 31337) ^ Math.imul(seed, 6971);
+      n = Math.imul(n ^ (n >>> 15), 0x2c1b3c6d);
+      n = Math.imul(n ^ (n >>> 12), 0x297a2d39);
+      n ^= n >>> 15;
+      return (n >>> 0) / 2147483647.5 - 1;
+    }
+
+    function getNoise() {
+      if (noiseTex) return noiseTex;
+      var N = 512;
+      var data = new Uint8Array(N * N * 4);
+      for (var y = 0; y < N; y++) {
+        for (var x = 0; x < N; x++) {
+          var i = (y * N + x) * 4;
+          data[i] = (hashNoise(x, y, 17) + 1) * 127.5;
+          data[i + 1] = (hashNoise(x, y, 29) + 1) * 127.5;
+          data[i + 2] = (hashNoise(x, y, 43) + 1) * 127.5;
+          data[i + 3] = 255;
+        }
+      }
+      noiseTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, N, N, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+      return noiseTex;
+    }
 
     function tex(w, h, filter) {
       var t = gl.createTexture();
@@ -373,7 +408,10 @@
         gl.uniform1f(U.comp.grain, opts.grain ? film.grain.amount * (opts.grainScale || 1) : 0);
         gl.uniform1f(U.comp.grainShadow, film.grain.shadow || 0);
         gl.uniform1f(U.comp.grainSize, film.grain.size || 1);
-        gl.uniform1f(U.comp.seed, (opts.seed == null ? 7 : opts.seed) % 997);
+        var noiseSeed = (opts.seed == null ? 7 : opts.seed) | 0;
+        gl.uniform2f(U.comp.noiseOff,
+          ((noiseSeed % 512) + 512) % 512,
+          (((noiseSeed * 7) % 512) + 512) % 512);
         gl.uniform1f(U.comp.vig, opts.vignette ? film.vignette : 0);
         gl.uniform1f(U.comp.leak, opts.leak ? film.leak : 0);
         gl.uniform1f(U.comp.leakTop, H * 0.34);
@@ -384,6 +422,8 @@
         gl.bindTexture(gl.TEXTURE_2D, colorT);
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, maskA);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, getNoise());
         draw(null, W, H);
 
         return true;
