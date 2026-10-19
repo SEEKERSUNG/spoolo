@@ -11,9 +11,9 @@
   try { gpuDevelop = S.GLDevelop ? S.GLDevelop() : null; } catch (e) { gpuDevelop = null; }
   var FRAMES_PER_ROLL = 36;
   var PREFS_KEY = 'spoolo.prefs.v1';
-  /* 影集缩略图按手机 DPR3 的显示尺寸烘焙：240px 会被放大两倍，
-     1px 颗粒被抹平；540px 在 165px 宽的格子里接近 1:1 */
-  var THUMB_W = 540;
+  /* 缩略图直接从冲印完成的原图缩放：720px 让影集格子（约 165 CSS × DPR3）
+     与灯箱（约 282 CSS × DPR3）的缩小倍率接近，颗粒图案同源、观感一致 */
+  var THUMB_W = 720;
 
   var $ = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) {
@@ -949,11 +949,6 @@
     var seed = (Math.random() * 100000) | 0;
     /* 硬件 LED 已经补过光，成片里只留一点暖调；屏幕补光保留完整模拟 */
     var flashAmt = flashKind === 'torch' ? 0.35 : flashKind === 'screen' ? 1 : 0;
-    /* 先在原始画面上缩一张底图；缩略图会在它上面重新跑一遍乳剂管线，
-       让 1px 颗粒按缩略图自己的像素生成，而不是从成片缩小时被平均掉。
-       底图失败也不影响成片，后面会退回普通缩放。 */
-    var thumbBase = null;
-    try { thumbBase = makeThumbBase(shot.canvas); } catch (e) { thumbBase = null; }
 
     openProcessing(film, function () {
       develop(shot.canvas, shot.W, shot.H, film, {
@@ -962,13 +957,9 @@
       });
       return toBlob(shot.canvas, 0.92).then(function (blob) {
         if (!blob) throw new Error('jpeg-encode-failed');
-        return makeThumb(shot.canvas, thumbBase, film, {
-          ev: capture.ev, halation: true, grain: true, vignette: true, leak: true,
-          seed: seed, dateStamp: capture.date, flash: flashAmt
-        }).catch(function () {
-          /* 缩略图管线失败时退回普通缩放，绝不因此丢掉整张照片 */
-          return scaledThumb(shot.canvas).catch(function () { return null; });
-        }).then(function (thumb) {
+        /* 缩略图直接从这张冲印完成的原图缩放：颗粒、日期、光晕都已经是成品，
+           不再对缩略图二次计算噪点，图案与灯箱成片同源 */
+        return scaledThumb(shot.canvas).catch(function () { return null; }).then(function (thumb) {
           var frame = {
             id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
             roll: capture.roll,
@@ -985,7 +976,9 @@
             date: capture.date,
             ts: Date.now(),
             blob: blob,
-            thumb: thumb || blob
+            thumb: thumb || blob,
+            /* 记录缩略图实际宽度；旧底片没有这个字段，打开影集时会按需重建 */
+            thumbW: thumb ? Math.min(THUMB_W, shot.W) : shot.W
           };
           return Store.add(frame).then(function () {
             frame.persisted = Store.lastAddPersisted !== false;
@@ -1081,19 +1074,7 @@
     });
   }
 
-  /* 成片分辨率的原始底图先缩到缩略图尺寸，保留未冲洗状态 */
-  function makeThumbBase(src) {
-    if (!src || src.width <= THUMB_W) return null;
-    var c = document.createElement('canvas');
-    c.width = THUMB_W;
-    /* 跟随成片实际比例：竖幅底片的缩略图不能再按 3:2 横构图裁 */
-    c.height = Math.max(1, Math.round(THUMB_W * src.height / src.width));
-    var cc = c.getContext('2d');
-    cc.imageSmoothingQuality = 'high';
-    cc.drawImage(src, 0, 0, c.width, c.height);
-    return c;
-  }
-
+  /* 直接缩放冲印完成的原图；导入的小图不会被放大 */
   function scaledThumb(full) {
     var c = document.createElement('canvas');
     c.width = Math.min(THUMB_W, full.width);
@@ -1101,18 +1082,7 @@
     var cc = c.getContext('2d');
     cc.imageSmoothingQuality = 'high';
     cc.drawImage(full, 0, 0, c.width, c.height);
-    return toBlob(c, 0.72);
-  }
-
-  function makeThumb(full, base, film, opts) {
-    if (base) {
-      /* 缩略图重新走一遍乳剂管线：颗粒按缩略图自己的像素生成，
-         不会被整张成片缩放时的平均抹成一片平滑灰 */
-      develop(base, base.width, base.height, film, opts);
-      return toBlob(base, 0.72);
-    }
-    /* 导入的小图本身没超过缩略图宽度：直接从成片缩，避免把低分辨率原图放大 */
-    return scaledThumb(full);
+    return toBlob(c, 0.8);
   }
 
   function advanceFrame(capture) {
@@ -1251,6 +1221,7 @@
     }
     el.albumManage.disabled = rows.length === 0;
     updateBatchUi();
+    scheduleThumbUpgrades();
   }
 
   function refreshAlbum() {
@@ -1319,6 +1290,89 @@
         '</button></li>';
     });
     el.frames.innerHTML = html;
+  }
+
+  /* ---------- 旧缩略图按需重建 ----------
+     v1.12.4 之前的底片没有 thumbW 标记，缩略图可能是 240 / 540px 的旧版本。
+     打开影集时逐张从原图重做成 720px，既修好老照片，也不阻塞首屏。 */
+  var thumbUpgradeRun = false;
+  var thumbUpgradeDone = Object.create(null);
+  var thumbUpgradeFailed = Object.create(null);
+
+  function albumVisible() {
+    var tab = $('#tabAlbum');
+    if (!tab || tab.getAttribute('aria-selected') !== 'true') return false;
+    return !isMobile() || el.lab.classList.contains('open');
+  }
+
+  function decodeImage(blob) {
+    return new Promise(function (resolve, reject) {
+      var u = URL.createObjectURL(blob);
+      var img = new Image();
+      img.onload = function () { URL.revokeObjectURL(u); resolve(img); };
+      img.onerror = function () { URL.revokeObjectURL(u); reject(new Error('decode-failed')); };
+      img.src = u;
+    });
+  }
+
+  function upgradeOneThumb(metaRow) {
+    return Store.get(metaRow.id).then(function (row) {
+      if (!row || !row.blob) return null;
+      return decodeImage(row.blob).then(function (img) {
+        /* 解码期间可能已经被删除：不要把它写回影集 */
+        var alive = state.shots.some(function (r) { return r.id === row.id; });
+        if (!alive) return null;
+        var sw = img.naturalWidth || img.width;
+        var sh = img.naturalHeight || img.height;
+        if (!sw || !sh) return null;
+        var w = Math.min(THUMB_W, sw);
+        var h = Math.max(1, Math.round(w * sh / sw));
+        var c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        var cc = c.getContext('2d');
+        cc.imageSmoothingQuality = 'high';
+        cc.drawImage(img, 0, 0, w, h);
+        return toBlob(c, 0.8).then(function (thumb) {
+          if (!thumb) return null;
+          row.thumb = thumb;
+          row.thumbW = w;
+          return Store.update(row).then(function () {
+            metaRow.thumb = thumb;
+            metaRow.thumbW = w;
+            var imgEl = el.frames.querySelector('.shot[data-id="' + row.id + '"] img');
+            if (imgEl) imgEl.src = url(thumb);
+            if (state.shots[0] && state.shots[0].id === row.id) setPeek(metaRow);
+            return row;
+          });
+        });
+      });
+    }).catch(function () { return null; });
+  }
+
+  function scheduleThumbUpgrades() {
+    if (thumbUpgradeRun || !albumVisible()) return;
+    thumbUpgradeRun = true;
+    var seen = Object.create(null);
+    function next() {
+      if (!albumVisible()) { thumbUpgradeRun = false; return; }
+      var target = null;
+      for (var i = 0; i < state.shots.length; i++) {
+        var r = state.shots[i];
+        if (typeof r.thumbW === 'number') continue;
+        if (thumbUpgradeDone[r.id] || thumbUpgradeFailed[r.id] || seen[r.id]) continue;
+        seen[r.id] = 1;
+        target = r;
+        break;
+      }
+      if (!target) { thumbUpgradeRun = false; return; }
+      upgradeOneThumb(target).then(function (ok) {
+        if (ok) thumbUpgradeDone[target.id] = 1;
+        else thumbUpgradeFailed[target.id] = 1;
+        setTimeout(next, 140);
+      });
+    }
+    next();
   }
 
   /* ---------- 批量管理 ---------- */
@@ -1704,6 +1758,7 @@
       })();
     }
     if (!wasOpen) setLabInert(true);
+    if (tab === 'album') scheduleThumbUpgrades();
   }
 
   function closeLab() {
@@ -1731,6 +1786,7 @@
     $('#tabAlbum').tabIndex = films ? -1 : 0;
     $('#panelFilms').hidden = !films;
     $('#panelAlbum').hidden = films;
+    if (!films) scheduleThumbUpgrades();
   }
 
   /* ======================================================================

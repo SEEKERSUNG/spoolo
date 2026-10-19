@@ -130,6 +130,40 @@
         .catch(function () { return null; });
     },
 
+    /* 只更新已有记录（用于旧缩略图重建）；不改 lastAddPersisted。
+       先读再写：如果照片在重建期间被删掉，不能把它写回来。 */
+    update: function (row) {
+      var replaced = false;
+      memory = memory.map(function (f) {
+        if (f.id === row.id) { replaced = true; return row; }
+        return f;
+      });
+      if (memOnly) return Promise.resolve(replaced);
+      return openDB().then(function (db) {
+        return new Promise(function (resolve, reject) {
+          var found = false;
+          var t = db.transaction(STORE, 'readwrite');
+          var os = t.objectStore(STORE);
+          var req = os.get(row.id);
+          req.onsuccess = function () {
+            if (req.result) { found = true; os.put(row); }
+          };
+          t.oncomplete = function () { resolve(found); };
+          t.onerror = function () { reject(t.error); };
+          t.onabort = function () { reject(t.error); };
+        });
+      }).then(function (found) {
+        if (found) {
+          var m = meta(row), hit = false;
+          for (var i = 0; i < cache.length; i++) {
+            if (cache[i].id === m.id) { cache[i] = m; hit = true; break; }
+          }
+          if (!hit) cache.push(m);
+        }
+        return found || replaced;
+      }).catch(function () { return replaced; });
+    },
+
     remove: function (id) {
       var inMemory = false;
       memory = memory.filter(function (f) {
