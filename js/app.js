@@ -32,6 +32,7 @@
     mirror: false,
     source: 'none',           /* camera | file | none */
     sourceLock: false,        /* 用户已选好导入底片，晚到的镜头请求不再顶掉它 */
+    cameraLost: false,        /* 轨道被系统掐断，回到相机时自动重连一次 */
     busy: false,
     rewinding: false,         /* 回卷动画期间不接受新的快门 */
     dirty: true,
@@ -306,6 +307,7 @@
     /* GPU 上下文丢失时退回 Canvas2D，避免取景直接黑掉 */
     el.preview.addEventListener('webglcontextlost', function (e) {
       e.preventDefault();
+      if (!glReady) return;
       glReady = false;
       fallback2DPreview();
       layoutPreview();
@@ -400,6 +402,13 @@
     if (!src) return;
     var size = sourceSize(src);
     if (!size.w || !size.h) return;
+    /* iOS 在系统弹窗/分享后可能静默丢 WebGL 上下文，事件不一定及时到；
+       每帧确认一次，丢了就立刻退回 Canvas2D，画面不会永久冻住 */
+    if (glReady && gl && gl.isContextLost && gl.isContextLost()) {
+      glReady = false;
+      fallback2DPreview();
+      layoutPreview();
+    }
     if (glReady) drawPreviewGL(src, size);
     else drawPreview2D(src, size);
   }
@@ -460,14 +469,24 @@
     if (state.source !== 'camera') drawPreview();
   }
 
-  var lastFrame = 0, frameTimes = [], lastAdapt = 0;
+  var lastFrame = 0, frameTimes = [], lastAdapt = 0, lastResumeTry = 0;
   function loop(now) {
     requestAnimationFrame(loop);
-    if (!state.running) return;
-    if (now - lastFrame < 1000 / 30) return;
-    lastFrame = now;
+    if (!state.running) {
+      /* visibilitychange 偶尔会漏掉一次；页面其实可见时把循环自己救回来 */
+      if (document.hidden) return;
+      state.running = true;
+    }
 
     var liveSrc = state.source === 'camera';
+    /* iOS 系统弹窗/确认框回来后 video 可能被暂停：低频补一次 play() */
+    if (liveSrc && el.video.paused && now - lastResumeTry > 1500) {
+      lastResumeTry = now;
+      resumeVideo();
+    }
+
+    if (now - lastFrame < 1000 / 30) return;
+    lastFrame = now;
     if (!liveSrc && !state.dirty) return;
     if (!liveSrc) state.dirty = false;
 
@@ -524,6 +543,7 @@
       state.mirror = facing === 'user';
       state.source = 'camera';
       state.live = true;
+      state.cameraLost = false;
       el.video.srcObject = stream;
       el.video.style.display = 'block';
       el.still.hidden = true;
@@ -556,6 +576,7 @@
       state.stream = null;
       state.live = false;
       state.source = 'none';
+      state.cameraLost = true;
       el.video.srcObject = null;
       showNotice('镜头连接已断开 · 点「重试」重新连接', 'empty');
     };
@@ -615,6 +636,40 @@
     } catch (e) { /* 个别内核对 play() 同步抛错，忽略 */ }
   }
 
+  /* iOS 在 confirm / 分享 / 抽屉遮挡后可能暂停 video，甚至不派发 ended。
+     这里做一次健康检查：暂停就 play，轨道真的断了就重连镜头。 */
+  function ensureCameraLive() {
+    if (state.source !== 'camera') {
+      /* 系统掐断轨道后 iOS 不一定自动恢复：关闭影集/切回前台时补一次重连；
+         只自动试一次，失败交给取景窗里的「重试」按钮 */
+      if (state.cameraLost && !state.sourceLock) {
+        state.cameraLost = false;
+        startCamera(state.facing);
+      }
+      return;
+    }
+    var track = state.stream && state.stream.getVideoTracks ? state.stream.getVideoTracks()[0] : null;
+    if (!track || track.readyState === 'ended') {
+      startCamera(state.facing);
+      return;
+    }
+    /* 少数 iOS 版本从系统弹窗回来会把 srcObject 清掉，重新挂上再播放 */
+    if (el.video.srcObject !== state.stream) {
+      el.video.srcObject = state.stream;
+      el.video.style.display = 'block';
+    }
+    if (el.video.paused) resumeVideo();
+  }
+
+  /* 从影集/灯箱/系统弹窗回到相机时，把预览循环、画布尺寸和视频一起唤醒 */
+  function wakePreview() {
+    state.running = !document.hidden;
+    state.dirty = true;
+    layoutPreview();
+    ensureCameraLive();
+    refreshPreview();
+  }
+
   /* 手机浏览器（尤其 iOS Safari）要求摄像头调用发生在「用户手势」里，页面加载时的自动启动
      会被静默拒绝。各家的错误名还不统一（NotAllowedError / NotFoundError / SecurityError 都见
      过），所以任何失败都保留监听：用户一碰页面就立刻重试，最多补试 3 次；一旦连上镜头、或
@@ -669,6 +724,7 @@
   function loadSource(src) {
     disarmCameraRetry();
     state.sourceLock = true;
+    state.cameraLost = false;
     stopCamera();
     state.mirror = false;
     el.video.style.display = 'none';
@@ -1531,7 +1587,10 @@
   function batchDelete() {
     var rows = selectedRows();
     if (!rows.length) return;
-    if (!window.confirm('删除所选的 ' + rows.length + ' 张底片？')) return;
+    var ok = window.confirm('删除所选的 ' + rows.length + ' 张底片？');
+    /* confirm 可能让 iOS 暂停 video，取消或确认后都要把相机唤醒 */
+    wakePreview();
+    if (!ok) return;
 
     var ids = Object.create(null);
     rows.forEach(function (r) { ids[r.id] = 1; });
@@ -1762,7 +1821,11 @@
   }
 
   function closeLab() {
-    if (!el.lab.classList.contains('open')) { setLabInert(false); return; }
+    if (!el.lab.classList.contains('open')) {
+      setLabInert(false);
+      wakePreview();
+      return;
+    }
     el.lab.classList.remove('open');
     el.scrim.classList.remove('show');
     document.documentElement.style.overflow = '';
@@ -1775,7 +1838,8 @@
     setTimeout(function () {
       if (!el.lab.classList.contains('open')) el.scrim.hidden = true;
     }, 340);
-    refreshPreview();
+    /* iOS 在 confirm / 抽屉 / 分享后可能把 video 或 WebGL 预览挂起 */
+    wakePreview();
   }
 
   function setTab(tab) {
@@ -2152,6 +2216,8 @@
        关闭后搬回 body，避免它跟着隐藏的 dialog 一起消失 */
     el.lightbox.addEventListener('close', function () {
       if (el.toast.parentNode === el.lightbox) document.body.appendChild(el.toast);
+      /* 分享面板 / 原生 dialog 关闭后，取景视频也可能被 iOS 挂起 */
+      wakePreview();
     });
 
     el.toastUndo.addEventListener('click', function () {
@@ -2228,11 +2294,11 @@
 
     document.addEventListener('visibilitychange', function () {
       state.running = !document.hidden;
-      if (!document.hidden) {
-        state.dirty = true;
-        layoutPreview();
-        resumeVideo();
-      }
+      if (!document.hidden) wakePreview();
+    });
+    window.addEventListener('pageshow', wakePreview);
+    window.addEventListener('focus', function () {
+      if (!document.hidden) wakePreview();
     });
   }
 
