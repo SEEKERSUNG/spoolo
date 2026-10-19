@@ -145,23 +145,217 @@
   /* ======================================================================
      取景
      ====================================================================== */
-  var ctx = el.preview.getContext('2d', { willReadFrequently: true });
-  ctx.imageSmoothingQuality = 'high';
+  var ctx = null;                    /* Canvas2D 兜底 */
+  var gl = null, glReady = false;    /* WebGL 预览 */
+  var glProg = null, glBuf = null, glVideoTex = null, glLutTex = null, glU = null;
+  var lutKey = '';
   var pw = 320, ph = 213;
+
+  var GL_VS = [
+    'attribute vec2 aPos;',
+    'varying vec2 vUv;',
+    'void main() {',
+    '  vUv = (aPos + 1.0) * 0.5;',
+    '  gl_Position = vec4(aPos, 0.0, 1.0);',
+    '}'
+  ].join('\n');
+
+  var GL_FS = [
+    'precision mediump float;',
+    'varying vec2 vUv;',
+    'uniform sampler2D uVideo;',
+    'uniform sampler2D uLut;',
+    'uniform vec4 uCrop;',
+    'uniform float uMirror, uMono, uSat, uVib;',
+    'uniform vec3 uST, uHT;',
+    'float lutR(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).r; }',
+    'float lutG(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).g; }',
+    'float lutB(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).b; }',
+    'void main() {',
+    '  vec2 uv = vUv;',
+    '  if (uMirror > 0.5) uv.x = 1.0 - uv.x;',
+    '  vec2 suv = vec2(mix(uCrop.x, uCrop.z, uv.x), mix(uCrop.y, uCrop.w, uv.y));',
+    '  vec3 c = texture2D(uVideo, suv).rgb;',
+    '  vec3 col;',
+    '  if (uMono > 0.5) {',
+    '    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));',
+    '    col = vec3(lutR(l));',
+    '  } else {',
+    '    vec3 t = vec3(lutR(c.r), lutG(c.g), lutB(c.b));',
+    '    float lum = dot(t, vec3(0.2126, 0.7152, 0.0722));',
+    '    float mx = max(max(t.r, t.g), t.b);',
+    '    float mn = min(min(t.r, t.g), t.b);',
+    '    float s = uSat + uVib * (1.0 - (mx - mn));',
+    '    col = vec3(lum) + (t - vec3(lum)) * s;',
+    '  }',
+    '  float nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+    '  col += uST * (1.0 - nrm) + uHT * nrm;',
+    '  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);',
+    '}'
+  ].join('\n');
+
+  function compileGlShader(g, type, src) {
+    var s = g.createShader(type);
+    g.shaderSource(s, src);
+    g.compileShader(s);
+    if (!g.getShaderParameter(s, g.COMPILE_STATUS)) {
+      if (window.console) console.warn('SPOOLO shader:', g.getShaderInfoLog(s));
+      g.deleteShader(s);
+      return null;
+    }
+    return s;
+  }
+
+  function initWebGLPreview() {
+    try {
+      var g = el.preview.getContext('webgl', {
+        alpha: false, antialias: false, depth: false, stencil: false,
+        premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'low-power'
+      });
+      if (!g) return false;
+      var vs = compileGlShader(g, g.VERTEX_SHADER, GL_VS);
+      var fs = compileGlShader(g, g.FRAGMENT_SHADER, GL_FS);
+      if (!vs || !fs) return false;
+      var p = g.createProgram();
+      g.attachShader(p, vs);
+      g.attachShader(p, fs);
+      g.linkProgram(p);
+      if (!g.getProgramParameter(p, g.LINK_STATUS)) {
+        if (window.console) console.warn('SPOOLO program:', g.getProgramInfoLog(p));
+        return false;
+      }
+      g.deleteShader(vs);
+      g.deleteShader(fs);
+      g.useProgram(p);
+
+      glBuf = g.createBuffer();
+      g.bindBuffer(g.ARRAY_BUFFER, glBuf);
+      g.bufferData(g.ARRAY_BUFFER, new Float32Array([
+        -1, -1, 1, -1, -1, 1,
+        -1, 1, 1, -1, 1, 1
+      ]), g.STATIC_DRAW);
+      var aPos = g.getAttribLocation(p, 'aPos');
+      g.enableVertexAttribArray(aPos);
+      g.vertexAttribPointer(aPos, 2, g.FLOAT, false, 0, 0);
+
+      glVideoTex = g.createTexture();
+      g.bindTexture(g.TEXTURE_2D, glVideoTex);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.LINEAR);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
+      g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL, true);
+
+      glLutTex = g.createTexture();
+      g.bindTexture(g.TEXTURE_2D, glLutTex);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.NEAREST);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.NEAREST);
+
+      glU = {
+        video: g.getUniformLocation(p, 'uVideo'),
+        lut: g.getUniformLocation(p, 'uLut'),
+        crop: g.getUniformLocation(p, 'uCrop'),
+        mirror: g.getUniformLocation(p, 'uMirror'),
+        mono: g.getUniformLocation(p, 'uMono'),
+        sat: g.getUniformLocation(p, 'uSat'),
+        vib: g.getUniformLocation(p, 'uVib'),
+        st: g.getUniformLocation(p, 'uST'),
+        ht: g.getUniformLocation(p, 'uHT')
+      };
+      g.uniform1i(glU.video, 0);
+      g.uniform1i(glU.lut, 1);
+
+      gl = g;
+      glProg = p;
+      glReady = true;
+      g.viewport(0, 0, el.preview.width || 1, el.preview.height || 1);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function fallback2DPreview() {
+    var c = document.createElement('canvas');
+    c.id = 'preview';
+    c.setAttribute('aria-hidden', 'true');
+    el.preview.parentNode.replaceChild(c, el.preview);
+    el.preview = c;
+    ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingQuality = 'high';
+  }
+
+  if (!initWebGLPreview()) {
+    fallback2DPreview();
+  } else {
+    /* GPU 上下文丢失时退回 Canvas2D，避免取景直接黑掉 */
+    el.preview.addEventListener('webglcontextlost', function (e) {
+      e.preventDefault();
+      glReady = false;
+      fallback2DPreview();
+      layoutPreview();
+    }, false);
+  }
+
+  function uploadLut() {
+    var f = currentFilm();
+    var L = S.buildLUT(f, state.ev / 3);
+    var data = new Uint8Array(1024);
+    for (var i = 0; i < 256; i++) {
+      if (L.mono) {
+        var v = L.mono[i];
+        data[i * 4] = v;
+        data[i * 4 + 1] = v;
+        data[i * 4 + 2] = v;
+      } else {
+        data[i * 4] = L.lut[i];
+        data[i * 4 + 1] = L.lut[i + 256];
+        data[i * 4 + 2] = L.lut[i + 512];
+      }
+      data[i * 4 + 3] = 255;
+    }
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, glLutTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  }
 
   function layoutPreview() {
     var r = el.frameBox.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-    /* 直接按像素预算控制预览分辨率：手机端每帧只处理约 9 万像素 */
-    var target = state.previewPixels;
-    var scale = Math.min(2, Math.sqrt(target / (r.width * r.height * dpr * dpr)));
-    pw = Math.max(160, Math.round(r.width * dpr * scale));
-    ph = Math.max(100, Math.round(pw * r.height / r.width));  /* 跟随取景窗实际比例，竖屏不被拉伸 */
-    if (el.preview.width !== pw || el.preview.height !== ph) {
-      el.preview.width = pw;
-      el.preview.height = ph;
+
+    if (glReady) {
+      /* GPU 上屏：按设备像素全分辨率渲染，不再受像素预算限制 */
+      var dpr = Math.min(window.devicePixelRatio || 1, 3);
+      var w = Math.round(r.width * dpr);
+      var h = Math.round(w * r.height / r.width);
+      var maxPx = 1400000;
+      if (w * h > maxPx) {
+        var shrink = Math.sqrt(maxPx / (w * h));
+        w = Math.round(w * shrink);
+        h = Math.round(h * shrink);
+      }
+      pw = Math.max(160, w);
+      ph = Math.max(100, h);
+      if (el.preview.width !== pw || el.preview.height !== ph) {
+        el.preview.width = pw;
+        el.preview.height = ph;
+      }
+      gl.viewport(0, 0, pw, ph);
+    } else {
+      /* 无 WebGL 时的 Canvas2D 兜底：继续按像素预算自适应 */
+      var dpr2 = Math.min(window.devicePixelRatio || 1, 1.5);
+      var target = state.previewPixels;
+      var scale = Math.min(2, Math.sqrt(target / (r.width * r.height * dpr2 * dpr2)));
+      pw = Math.max(160, Math.round(r.width * dpr2 * scale));
+      ph = Math.max(100, Math.round(pw * r.height / r.width));
+      if (el.preview.width !== pw || el.preview.height !== ph) {
+        el.preview.width = pw;
+        el.preview.height = ph;
+      }
     }
+
     state.dirty = true;
     /* 改画布尺寸会把画布清空，静态图源立刻补画一张，不等 rAF */
     if (state.source !== 'camera') drawPreview();
@@ -193,6 +387,46 @@
     if (!src) return;
     var size = sourceSize(src);
     if (!size.w || !size.h) return;
+    if (glReady) drawPreviewGL(src, size);
+    else drawPreview2D(src, size);
+  }
+
+  function drawPreviewGL(src, size) {
+    var crop = coverRect(size.w, size.h, pw / ph);
+    var f = currentFilm();
+    var key = f.code + '|' + (state.ev / 3).toFixed(2);
+    if (key !== lutKey) {
+      uploadLut();
+      lutKey = key;
+    }
+
+    gl.useProgram(glProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, glVideoTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    } catch (e) {
+      return;
+    }
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, glLutTex);
+
+    gl.uniform4f(glU.crop,
+      crop.x / size.w,
+      1 - (crop.y + crop.h) / size.h,
+      (crop.x + crop.w) / size.w,
+      1 - crop.y / size.h);
+    gl.uniform1f(glU.mirror, state.mirror ? 1 : 0);
+    gl.uniform1f(glU.mono, f.bw ? 1 : 0);
+    gl.uniform1f(glU.sat, f.bw ? 0 : f.sat);
+    gl.uniform1f(glU.vib, f.bw ? 0 : f.vibrance);
+    gl.uniform3f(glU.st, f.shadowTint[0], f.shadowTint[1], f.shadowTint[2]);
+    gl.uniform3f(glU.ht, f.highTint[0], f.highTint[1], f.highTint[2]);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  function drawPreview2D(src, size) {
     var crop = coverRect(size.w, size.h, pw / ph);
     ctx.save();
     if (state.mirror) { ctx.translate(pw, 0); ctx.scale(-1, 1); }
@@ -230,7 +464,7 @@
 
     frameTimes.push(dt);
     if (frameTimes.length > 10) frameTimes.shift();
-    if (liveSrc && now - lastAdapt > 700 && frameTimes.length === 10) {
+    if (!glReady && liveSrc && now - lastAdapt > 700 && frameTimes.length === 10) {
       lastAdapt = now;
       var avg = frameTimes.reduce(function (a, b) { return a + b; }, 0) / frameTimes.length;
       if (avg > 22 && state.previewPixels > 120000) {
@@ -262,10 +496,14 @@
       failCamera(window.isSecureContext ? '浏览器不支持镜头调用' : '手机只允许 HTTPS 调用镜头');
       return Promise.resolve(false);
     }
+    /* 手机端降到 1440×1080：纹理上传和成片像素量都明显下降，取景更凉快 */
+    var mobileCam = window.matchMedia('(max-width: 999px)').matches;
+    var idealW = mobileCam ? 1440 : 1920;
+    var idealH = mobileCam ? 1080 : 1440;
     camStart = navigator.mediaDevices.getUserMedia({
       audio: false,
       /* 要 4:3（多数手机 CMOS 的原生比例），竖屏取景框就是它转 90°，几乎不用裁切 */
-      video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1440 } }
+      video: { facingMode: { ideal: facing }, width: { ideal: idealW }, height: { ideal: idealH } }
     }).then(function (stream) {
       /* 等到结果时用户已经导入了底片：这条流不能再顶掉他选好的画面 */
       if (state.sourceLock) {
@@ -594,12 +832,19 @@
     setTimeout(function () { el.flashFx.classList.remove('firing'); }, 260);
   }
 
-  /* 自动闪光：从当前取景画面抽样估亮度 */
+  /* 自动闪光：用一张很小的离屏画布抽样，不依赖预览上下文 */
+  var lumaCanvas = document.createElement('canvas');
+  lumaCanvas.width = 48;
+  lumaCanvas.height = 36;
   function sceneLuma() {
+    var src = activeSource();
+    if (!src) return 0.5;
     try {
-      var d = ctx.getImageData(0, 0, pw, ph).data;
+      var lc = lumaCanvas.getContext('2d', { willReadFrequently: true });
+      lc.drawImage(src, 0, 0, 48, 36);
+      var d = lc.getImageData(0, 0, 48, 36).data;
       var sum = 0, n = 0;
-      for (var i = 0; i < d.length; i += 64) {
+      for (var i = 0; i < d.length; i += 4) {
         sum += d[i] * 0.2126 + d[i + 1] * 0.7152 + d[i + 2] * 0.0722;
         n++;
       }
@@ -846,7 +1091,7 @@
   function openProcessing(film, work) {
     var bar = el.procBar;
     var steps = $$('.proc-steps li');
-    var dur = 800, t0 = performance.now();
+    var dur = 700, t0 = performance.now();
     var result = null, error = null, settled = false;
 
     el.procTitle.textContent = (film.process === 'B&W' ? '黑白显影中' : film.process + ' 冲印中');
@@ -880,7 +1125,7 @@
             el.processing.hidden = true;
             bar.style.width = '0';
             if (error) reject(error); else resolve(result);
-          }, 160);
+          }, 120);
         };
         wait();
       }

@@ -476,4 +476,5 @@
   global.SPOOLO.FILMS = FILMS;
   global.SPOOLO.meters = meters;
   global.SPOOLO.render = render;
+  global.SPOOLO.buildLUT = buildLUT;
 })(window);
