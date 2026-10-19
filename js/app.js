@@ -1091,7 +1091,7 @@
   function openProcessing(film, work) {
     var bar = el.procBar;
     var steps = $$('.proc-steps li');
-    var dur = 700, t0 = performance.now();
+    var dur = 500, t0 = performance.now();
     var result = null, error = null, settled = false;
 
     el.procTitle.textContent = (film.process === 'B&W' ? '黑白显影中' : film.process + ' 冲印中');
@@ -1125,7 +1125,7 @@
             el.processing.hidden = true;
             bar.style.width = '0';
             if (error) reject(error); else resolve(result);
-          }, 120);
+          }, 100);
         };
         wait();
       }
