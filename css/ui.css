@@ -746,8 +746,12 @@
 }
 .shot.is-selected .shot-check::after { content: '✓'; }
 .shot.is-selected .shot-film {
-  box-shadow: 0 0 0 2px var(--amber), 0 8px 20px -12px oklch(0% 0 0 / 1);
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+  box-shadow: 0 8px 20px -12px oklch(0% 0 0 / 1);
 }
+/* touch 设备点选后 :hover 会粘住，轮廓线不受 box-shadow 规则影响 */
+.shot.is-selected .shot-open:hover .shot-film { outline-color: var(--amber); }
 .shot.is-selected .shot-meta b { color: var(--amber); }
 .shot-film {
   position: relative;
@@ -1040,6 +1044,14 @@
 }
 @media (min-width: 1000px) {
   .toast { bottom: 24px; }
+}
+/* 手机上提示放到顶部，避免盖住快门 */
+@media (max-width: 999px) {
+  .toast {
+    top: calc(12px + env(safe-area-inset-top));
+    bottom: auto;
+    transform: translate(-50%, -12px);
+  }
 }
 
 /* ---------- 手机横屏控制台：EV 独占一行，不再和快门挤在同一列 ---------- */

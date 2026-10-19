@@ -968,8 +968,7 @@
     }).then(function (frame) {
       state.busy = false;
       if (!frame) return;
-      toast('已冲印 ' + frame.code + ' · 第 ' + pad2(frame.frameNo) + ' 张' +
-        (frame.persisted === false ? ' · 存储不可用，仅本次会话' : ''));
+      if (frame.persisted === false) toast('存储不可用 · 这张只在本次会话');
       advanceFrame();
       refreshAlbum();
     }).catch(function () {
@@ -1080,7 +1079,6 @@
       updateCounter();
       state.rewinding = false;
       el.shutter.disabled = false;
-      if (msg) toast('已装上新卷 · ROLL ' + pad2(prefs.roll));
     }, 1850);
   }
 
@@ -1568,7 +1566,6 @@
       if (!r.result) { toast('这张图片读不出来，请换一张'); return; }
       loadSource(r.result);
       closeLab();
-      toast('已装入「' + (file.name || '本地底片') + '」· 按下快门即可冲洗');
     };
     r.onerror = function () { toast('这张图片读不出来，请换一张'); };
     try {
@@ -1816,14 +1813,10 @@
         savePrefs();
         b.setAttribute('aria-pressed', prefs.timer > 0 ? 'true' : 'false');
         el.timerVal.textContent = prefs.timer === 0 ? '关' : prefs.timer + 's';
-        toast(prefs.timer === 0 ? '定时关闭' : prefs.timer + ' 秒后自动按快门');
       } else if (act === 'flash') {
         prefs.flash = (prefs.flash + 1) % 3;
         savePrefs();
         updateFlashUi();
-        var flashMsg = ['闪光灯已关闭', '闪光灯：自动（暗光时触发）', '闪光灯：强制开启'][prefs.flash];
-        if (prefs.flash > 0 && !torchTrack()) flashMsg += ' · 屏幕补光';
-        toast(flashMsg);
       } else if (act === 'grid') {
         prefs.grid = !prefs.grid;
         savePrefs();
@@ -1833,13 +1826,11 @@
         prefs.date = !prefs.date;
         savePrefs();
         b.setAttribute('aria-pressed', prefs.date ? 'true' : 'false');
-        toast(prefs.date ? '日期打印已开启：底片右下角会留下橙色印记' : '日期打印已关闭');
       } else if (act === 'sound') {
         prefs.sound = !prefs.sound;
         savePrefs();
         b.setAttribute('aria-pressed', prefs.sound ? 'true' : 'false');
         if (prefs.sound) Sound.play('tick');
-        toast(prefs.sound ? '快门声已开启' : '快门声已关闭');
       } else if (act === 'import') {
         pickFile();
       }
@@ -1946,7 +1937,7 @@
 
     /* 回卷 */
     $('#rewind').addEventListener('click', function () {
-      rewind('手动回卷 · 计数器归零');
+      rewind();
     });
 
     /* 图库 */
