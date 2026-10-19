@@ -31,7 +31,7 @@
     rewinding: false,         /* 回卷动画期间不接受新的快门 */
     dirty: true,
     running: true,
-    previewPixels: 90000,
+    previewPixels: 180000,
     shots: [],
     urls: [],
     current: null             /* 灯箱中的照片 */
@@ -146,6 +146,7 @@
      取景
      ====================================================================== */
   var ctx = el.preview.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingQuality = 'high';
   var pw = 320, ph = 213;
 
   function layoutPreview() {
@@ -154,7 +155,7 @@
     var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     /* 直接按像素预算控制预览分辨率：手机端每帧只处理约 9 万像素 */
     var target = state.previewPixels;
-    var scale = Math.min(1.05, Math.sqrt(target / (r.width * r.height * dpr * dpr)));
+    var scale = Math.min(2, Math.sqrt(target / (r.width * r.height * dpr * dpr)));
     pw = Math.max(160, Math.round(r.width * dpr * scale));
     ph = Math.max(100, Math.round(pw * r.height / r.width));  /* 跟随取景窗实际比例，竖屏不被拉伸 */
     if (el.preview.width !== pw || el.preview.height !== ph) {
@@ -232,11 +233,11 @@
     if (liveSrc && now - lastAdapt > 700 && frameTimes.length === 10) {
       lastAdapt = now;
       var avg = frameTimes.reduce(function (a, b) { return a + b; }, 0) / frameTimes.length;
-      if (avg > 22 && state.previewPixels > 64000) {
-        state.previewPixels = Math.max(64000, state.previewPixels - 12000);
+      if (avg > 22 && state.previewPixels > 120000) {
+        state.previewPixels = Math.max(120000, state.previewPixels - 18000);
         layoutPreview();
-      } else if (avg < 9 && state.previewPixels < 180000) {
-        state.previewPixels = Math.min(180000, state.previewPixels + 10000);
+      } else if (avg < 9 && state.previewPixels < 300000) {
+        state.previewPixels = Math.min(300000, state.previewPixels + 18000);
         layoutPreview();
       }
       frameTimes.length = 0;

@@ -406,6 +406,9 @@
 
     if (wantHalo) boxBlur(mask, hw, hh, haloR, 2);
 
+    /* 取景预览只跑第一遍色彩；没有空间效果时不必再扫一遍全画面 */
+    if (!wantHalo && !wantGrain && !wantVig && !wantLeak && !wantFlash) return data;
+
     /* 第二遍：光晕 + 颗粒 + 暗角 + 漏光 */
     var seedA = seed, seedB = (seed * 7 + 13) | 0;
     var bodyTop = h * 0.34, bodyBot = h * 0.94;
