@@ -10,11 +10,22 @@
   var dbp = null, memory = [], cache = [];
   var memOnly = typeof indexedDB === 'undefined';
 
+  /* IndexedDB 存在但 open 失败（隐私模式、策略、配额等）时也要切到内存兜底，
+     并通知应用层给一次启动提示；否则刷新后照片会静默消失。 */
+  function markFallback() {
+    if (!Store.persistent) return;
+    Store.persistent = false;
+    if (typeof Store.onPersistentChange === 'function') {
+      try { Store.onPersistentChange(); } catch (e) {}
+    }
+  }
+
   function openDB() {
     if (memOnly) return Promise.reject(new Error('no-idb'));
     if (dbp) return dbp;
     dbp = new Promise(function (resolve, reject) {
-      var req = indexedDB.open(DB, VER);
+      var req;
+      try { req = indexedDB.open(DB, VER); } catch (e) { reject(e); return; }
       req.onupgradeneeded = function () {
         var db = req.result;
         if (!db.objectStoreNames.contains(STORE)) {
@@ -24,6 +35,9 @@
       };
       req.onsuccess = function () { resolve(req.result); };
       req.onerror = function () { reject(req.error); };
+    }).catch(function (err) {
+      markFallback();
+      throw err;
     });
     return dbp;
   }
@@ -82,6 +96,10 @@
   }
 
   var Store = {
+    /* 启动时 IndexedDB 是否可用；false 表示只能在本次会话内存里保存 */
+    persistent: !memOnly,
+    /* IndexedDB 初始化失败时由 store 主动通知应用层 */
+    onPersistentChange: null,
     /* 最近一次 add 是否真的写进了 IndexedDB；false 表示只在本次会话的内存里 */
     lastAddPersisted: null,
 

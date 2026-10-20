@@ -133,6 +133,7 @@
     negatives: $('#negatives'),
     albumStat: $('#albumStat'),
     albumManage: $('#albumManage'),
+    albumImport: $('#albumImport'),
     albumBatch: $('#albumBatch'),
     batchCount: $('#batchCount'),
     batchAll: $('#batchAll'),
@@ -339,6 +340,7 @@
   function layoutPreview() {
     var r = el.frameBox.getBoundingClientRect();
     if (!r.width || !r.height) return;
+    var resized = false;
 
     if (glReady) {
       /* GPU 上屏：按设备像素全分辨率渲染，不再受像素预算限制 */
@@ -356,6 +358,7 @@
       if (el.preview.width !== pw || el.preview.height !== ph) {
         el.preview.width = pw;
         el.preview.height = ph;
+        resized = true;
       }
       gl.viewport(0, 0, pw, ph);
     } else {
@@ -368,12 +371,14 @@
       if (el.preview.width !== pw || el.preview.height !== ph) {
         el.preview.width = pw;
         el.preview.height = ph;
+        resized = true;
       }
     }
 
     state.dirty = true;
-    /* 改画布尺寸会把画布清空，静态图源立刻补画一张，不等 rAF */
-    if (state.source !== 'camera') drawPreview();
+    /* 改画布尺寸会把画布清空：无论静态底片还是实时取景都立刻补画一张，
+       否则 Canvas2D 兜底自适应尺寸时会出现 1～2 帧黑屏 */
+    if (resized || state.source !== 'camera') drawPreview();
   }
 
   function activeSource() {
@@ -1195,17 +1200,52 @@
   /* ======================================================================
      冲印遮罩
      ====================================================================== */
+  var processingInert = null, processingReturnFocus = null;
+
+  /* 冲印遮罩在视觉上盖住全屏；背景若不禁用，键盘仍能 Tab 到被遮住的控件 */
+  function setProcessingInert(on) {
+    var cam = $('.camera');
+    var skip = $('.skip');
+    if (on) {
+      if (processingInert) return;
+      processingReturnFocus = document.activeElement;
+      processingInert = {
+        cam: cam ? !!cam.inert : false,
+        lab: !!el.lab.inert,
+        skip: skip ? !!skip.inert : false
+      };
+      if (cam) cam.inert = true;
+      el.lab.inert = true;
+      if (skip) skip.inert = true;
+    } else if (processingInert) {
+      if (cam) cam.inert = processingInert.cam;
+      el.lab.inert = processingInert.lab;
+      if (skip) skip.inert = processingInert.skip;
+      processingInert = null;
+      var target = processingReturnFocus;
+      processingReturnFocus = null;
+      if (target && target.focus && document.documentElement.contains(target) && target.getClientRects().length) {
+        try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+      }
+    }
+  }
+
   function openProcessing(film, work) {
     var bar = el.procBar;
     var steps = $$('.proc-steps li');
     var dur = 500, t0 = performance.now();
     var result = null, error = null, settled = false;
 
+    /* 先取消 hidden，再更新文案：读屏的 live region 才能捕获到这次内容变化 */
+    el.processing.hidden = false;
     el.procTitle.textContent = (film.process === 'B&W' ? '黑白显影中' : film.process + ' 冲印中');
     el.procNote.textContent = '按「' + film.code + '」的乳剂曲线还原色彩…';
-    el.processing.hidden = false;
     bar.style.width = '0';
     steps.forEach(function (s) { s.className = ''; });
+    /* 冲印是全局模态：若暗房抽屉还开着，先收起，避免两套 inert/焦点状态互相覆盖 */
+    if (el.lab.classList.contains('open')) closeLab();
+    setProcessingInert(true);
+    try { el.processing.focus({ preventScroll: true }); } catch (e) { el.processing.focus(); }
 
     /* 先让遮罩画出来，再开始重活，避免首帧就卡住 */
     setTimeout(function () {
@@ -1231,6 +1271,7 @@
           setTimeout(function () {
             el.processing.hidden = true;
             bar.style.width = '0';
+            setProcessingInert(false);
             if (error) reject(error); else resolve(result);
           }, 100);
         };
@@ -1466,6 +1507,39 @@
     updateBatchUi();
   }
 
+  /* 删除会重绘影集、销毁触发删除的按钮；显式把焦点交给下一张底片或管理入口，
+     否则浏览器只能把 activeElement 退回 body，键盘/读屏用户会失去上下文 */
+  function focusAlbumFallback() {
+    var target = el.albumManage && !el.albumManage.disabled ? el.albumManage :
+      (el.albumImport && !el.albumImport.disabled ? el.albumImport : null);
+    if (target) {
+      try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+    }
+  }
+
+  function focusShotAfterDelete(index) {
+    requestAnimationFrame(function () {
+      var row = state.shots[index] || state.shots[index - 1] || state.shots[0];
+      var btn = row ? el.frames.querySelector('.shot[data-id="' + row.id + '"] .shot-open') : null;
+      if (btn) {
+        try { btn.focus({ preventScroll: true }); } catch (e) { btn.focus(); }
+        return;
+      }
+      focusAlbumFallback();
+    });
+  }
+
+  function focusAfterBatchDelete() {
+    requestAnimationFrame(function () {
+      var target = state.managing && el.albumManage && !el.albumManage.disabled ? el.albumManage : null;
+      if (!target) target = el.albumImport && !el.albumImport.disabled ? el.albumImport : null;
+      if (!target) target = el.albumManage && !el.albumManage.disabled ? el.albumManage : null;
+      if (target) {
+        try { target.focus({ preventScroll: true }); } catch (e) { target.focus(); }
+      }
+    });
+  }
+
   function toggleSelect(id) {
     if (!state.managing) return;
     if (state.selected[id]) delete state.selected[id];
@@ -1596,6 +1670,7 @@
     rows.forEach(function (r) { ids[r.id] = 1; });
     state.selected = Object.create(null);
     paintAlbum(state.shots.filter(function (r) { return !ids[r.id]; }));
+    focusAfterBatchDelete();
 
     /* 和单张删除一样：先复制独立 Blob，再删库；撤销写回副本 */
     var copiesP = Promise.all(rows.map(function (r) {
@@ -1716,9 +1791,12 @@
   function deleteCurrent() {
     var row = state.current;
     if (!row) return;
+    var index = -1;
+    for (var i = 0; i < state.shots.length; i++) if (state.shots[i].id === row.id) index = i;
     el.lightbox.close();
 
     paintAlbum(state.shots.filter(function (r) { return r.id !== row.id; }));
+    focusShotAfterDelete(index);
 
     /* 先复制独立 Blob，再立即从 IndexedDB 删除：
        关掉页面也不会留下「待删除」记录；撤销时写回副本 */
@@ -1786,6 +1864,18 @@
     });
   }
 
+  /* 移动抽屉行为上已是模态（inert + 焦点陷阱 + Esc），语义同步成 dialog；
+     桌面侧栏仍是普通 aside。 */
+  function setLabDialog(on) {
+    if (on) {
+      el.lab.setAttribute('role', 'dialog');
+      el.lab.setAttribute('aria-modal', 'true');
+    } else {
+      el.lab.removeAttribute('role');
+      el.lab.removeAttribute('aria-modal');
+    }
+  }
+
   /* 断点切回桌面时收起移动端抽屉，恢复页面滚动（否则 overflow:hidden 会一直留着） */
   function syncViewportMode() {
     if (isMobile()) return;
@@ -1802,6 +1892,7 @@
     var wasOpen = el.lab.classList.contains('open');
     if (!wasOpen) labReturnFocus = document.activeElement;
     el.lab.classList.add('open');
+    setLabDialog(true);
     el.scrim.hidden = false;
     requestAnimationFrame(function () { el.scrim.classList.add('show'); });
     document.documentElement.style.overflow = 'hidden';
@@ -1822,11 +1913,16 @@
 
   function closeLab() {
     if (!el.lab.classList.contains('open')) {
-      setLabInert(false);
-      wakePreview();
+      setLabDialog(false);
+      /* 冲印期间背景 inert 由 setProcessingInert 管理，不能被 Esc 提前清掉 */
+      if (!processingInert) {
+        setLabInert(false);
+        wakePreview();
+      }
       return;
     }
     el.lab.classList.remove('open');
+    setLabDialog(false);
     el.scrim.classList.remove('show');
     document.documentElement.style.overflow = '';
     setLabInert(false);
@@ -1867,6 +1963,8 @@
 
   function toast(msg, actionLabel, action) {
     placeToast();
+    /* 先取消 hidden 再改文案：live region 在隐藏状态下写内容，读屏可能不播报 */
+    el.toast.hidden = false;
     el.toastText.textContent = msg;
     toastAction = action || null;
     if (actionLabel && action) {
@@ -1875,7 +1973,6 @@
     } else {
       el.toastUndo.hidden = true;
     }
-    el.toast.hidden = false;
     /* 显示与淡入分两帧：.toast 现在由 [hidden] 控制 display，先渲染出来再加 .show 才看得到过渡 */
     requestAnimationFrame(function () {
       requestAnimationFrame(function () { el.toast.classList.add('show'); });
@@ -2169,7 +2266,10 @@
     $('#peek').addEventListener('click', function () { openLab('album'); });
     $('#openFilms').addEventListener('click', function () { openLab('films'); });
     $('#sheetClose').addEventListener('click', closeLab);
-    el.scrim.addEventListener('click', closeLab);
+    /* 用 pointerdown 而不是 click：触摸 tap 旋钮时，抽屉在 pointerup 才打开，
+       随后同一手势合成的 click 会命中刚出现的 scrim；click 关闭会把抽屉瞬间关掉。
+       只有真正从 scrim 上按下（pointerdown）才关闭，天然过滤掉这种合成 click。 */
+    el.scrim.addEventListener('pointerdown', closeLab);
     $('#tabFilms').addEventListener('click', function () { setTab('films'); });
     $('#tabAlbum').addEventListener('click', function () { setTab('album'); });
 
@@ -2325,6 +2425,14 @@
     setTab('films');
 
     bindControls();
+    var storageWarned = false;
+    function warnNoStorage() {
+      if (storageWarned) return;
+      storageWarned = true;
+      toast('存储不可用：拍摄的照片只在本次会话');
+    }
+    Store.onPersistentChange = warnNoStorage;
+    if (!Store.persistent) setTimeout(warnNoStorage, 1200);
     refreshAlbum();
     layoutPreview();
     /* 字体或首屏布局可能晚于 DOMContentLoaded 稳定，再量两次取景框 */

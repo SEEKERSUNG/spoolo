@@ -126,6 +126,18 @@ button, input, select { font: inherit; color: inherit; }
 }
 .skip:focus { transform: none; }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* 房间：一层很淡的顶光与暗角，像把相机放在桌上 */
 .room {
   position: fixed;
@@ -378,15 +390,17 @@ button, input, select { font: inherit; color: inherit; }
   .maker-name { font-size: 14px; }
 }
 
-/* 极矮的横屏：回到可滚动，避免机身被裁掉 */
+/* 极矮的横屏：回到可滚动，避免机身被裁掉。
+   基础规则里的 overscroll-behavior:none 会阻断 body→html 的滚动链，
+   这里必须恢复 auto，否则页面看着能滚、手势和滚轮却滚不动 */
 @media (max-width: 999px) and (orientation: landscape) and (max-height: 680px) {
-  html, body { height: auto; min-height: 100vh; overflow: auto; }
+  html, body { height: auto; min-height: 100vh; overflow: auto; overscroll-behavior: auto; }
   .stage { height: auto; }
 }
 
-/* 极矮的竖屏（老式 4 英寸屏）：同样退回可滚动 */
+/* 极矮的竖屏（老式 4 英寸屏）：同样退回可滚动，同样恢复滚动链 */
 @media (max-width: 999px) and (orientation: portrait) and (max-height: 520px) {
-  html, body { height: auto; min-height: 100vh; overflow: auto; }
+  html, body { height: auto; min-height: 100vh; overflow: auto; overscroll-behavior: auto; }
   .stage { height: auto; }
 }
 
