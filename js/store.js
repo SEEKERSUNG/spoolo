@@ -9,6 +9,7 @@
   var DB = 'spoolo', VER = 1, STORE = 'frames';
   var dbp = null, memory = [], cache = [];
   var memOnly = typeof indexedDB === 'undefined';
+  var readUsedFallback = false;
 
   /* IndexedDB 存在但 open 失败（隐私模式、策略、配额等）时也要切到内存兜底，
      并通知应用层给一次启动提示；否则刷新后照片会静默消失。 */
@@ -25,7 +26,18 @@
     if (dbp) return dbp;
     dbp = new Promise(function (resolve, reject) {
       var req;
+      var timer = null, settled = false;
+      var finish = function (err, db) {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (err) reject(err); else resolve(db);
+      };
       try { req = indexedDB.open(DB, VER); } catch (e) { reject(e); return; }
+      /* open 可能既不 success 也不 error/abort（扩展或策略卡住）；给一个上限 */
+      timer = setTimeout(function () {
+        finish(new Error('idb-open-timeout'));
+      }, 4000);
       req.onupgradeneeded = function () {
         var db = req.result;
         if (!db.objectStoreNames.contains(STORE)) {
@@ -33,8 +45,10 @@
           os.createIndex('ts', 'ts');
         }
       };
-      req.onsuccess = function () { resolve(req.result); };
-      req.onerror = function () { reject(req.error); };
+      req.onsuccess = function () { finish(null, req.result); };
+      req.onerror = function () { finish(req.error || new Error('idb-open-error')); };
+      /* 规范上 open 还可能是 abort（例如存储策略/配额），不能只等 onerror */
+      req.onabort = function () { finish(new Error('idb-open-aborted')); };
     }).catch(function (err) {
       markFallback();
       throw err;
@@ -64,6 +78,7 @@
 
   /* 逐条游标读取：列表不再一次把每张原图都读进来 */
   function readAll() {
+    readUsedFallback = false;
     return openDB().then(function (db) {
       return new Promise(function (resolve, reject) {
         var rows = [];
@@ -78,6 +93,28 @@
           }
           rows.push(meta(cur.value || {}));
           cur.continue();
+        };
+        req.onerror = function () { reject(req.error); };
+        t.onerror = function () { reject(t.error); };
+      });
+    }).catch(function (err) {
+      /* 游标/事务读失败时退到 getAll；能恢复就先恢复，同时让应用层提示一次异常 */
+      return readAllFallback().then(function (rows) {
+        readUsedFallback = true;
+        return rows;
+      }).catch(function () { throw err; });
+    });
+  }
+
+  function readAllFallback() {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var t = db.transaction(STORE, 'readonly');
+        var req = t.objectStore(STORE).getAll();
+        req.onsuccess = function () {
+          var rows = (req.result || []).map(meta);
+          rows.sort(function (a, b) { return b.ts - a.ts; });
+          resolve(rows);
         };
         req.onerror = function () { reject(req.error); };
         t.onerror = function () { reject(t.error); };
@@ -100,6 +137,8 @@
     persistent: !memOnly,
     /* IndexedDB 初始化失败时由 store 主动通知应用层 */
     onPersistentChange: null,
+    /* 最近一次列表读取是否失败/走了备用读取，供应用层给用户提示 */
+    lastListFailed: false,
     /* 最近一次 add 是否真的写进了 IndexedDB；false 表示只在本次会话的内存里 */
     lastAddPersisted: null,
 
@@ -129,12 +168,18 @@
     },
 
     all: function () {
-      if (memOnly) return Promise.resolve(mergeRows([]));
+      if (memOnly) {
+        Store.lastListFailed = false;
+        return Promise.resolve(mergeRows([]));
+      }
       return readAll().then(function (rows) {
         cache = rows;
+        Store.lastListFailed = readUsedFallback;
         return mergeRows(rows);
       }).catch(function () {
-        /* 读失败时用上次成功的快照兜底，不把库里的照片切没 */
+        /* 读失败时用上次成功的快照兜底，不把库里的照片切没，
+           并让应用层知道这次列表不可信 */
+        Store.lastListFailed = true;
         return mergeRows(cache);
       });
     },

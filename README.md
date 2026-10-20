@@ -1,6 +1,6 @@
 # SPOOLO · 一台网页里的胶片相机
 
-> **版本 v1.12.7**
+> **版本 v1.12.8**
 > 在线体验：<https://seekersung.github.io/spoolo/>
 > 源码仓库：<https://github.com/SEEKERSUNG/spoolo>
 > 技术文档：[TECHNICAL.md](TECHNICAL.md)
@@ -88,6 +88,7 @@ TECHNICAL.md        技术文档：架构、色彩管线、数据模型、扩展
 
 ## 版本记录
 
+- **v1.12.8** —— 存储/竞态 corner 修复：IndexedDB 游标读取失败时先退到 `getAll` 恢复列表，仍失败则显示“存储读取失败”而不是静默空影集；`indexedDB.open` 补 `onabort` 与 4s 超时，避免 Promise 永不 settle 导致冲印遮罩卡死；自动回卷的卷号钳制在 9999；双标签页同时快门用 Web Locks 串行化并在拿锁后同步 localStorage 的 roll/frame，避免重复 `ROLL/#`。
 - **v1.12.7** —— 修移动端触摸点按 FILM 旋钮后抽屉被同一手势的合成 click 命中 scrim 立刻关闭（scrim 改为只用 pointerdown 关闭）；修矮横屏/矮竖屏下 html/body 同时成为滚动容器时 `overscroll-behavior:none` 阻断滚动链、手势和滚轮滚不动的问题（极矮视口恢复 `overscroll-behavior:auto`）。无障碍打磨：文件上传框移除 `aria-hidden` 并补可访问名称；单张/批量删除后焦点回到下一张底片或管理入口；冲印遮罩期间背景 `inert`、焦点进入遮罩并在结束后归还；移动抽屉补 `role="dialog"` / `aria-modal`；IndexedDB 不可用时启动提示；Canvas2D 兜底改画布尺寸后立即补画避免启动黑帧；Toast/冲印 live region 先显示再写文案；补页面 `h1`。
 - **v1.12.6** —— 新增 `TECHNICAL.md` 技术文档：模块职责、取景/拍摄/冲印数据流、状态与存储、影集/灯箱/批量、**色彩管线**（LUT 曲线、饱和/鲜艳度、分离调色、halation、颗粒的 CPU hash 与 GPU 噪声纹理、暗角/漏光/闪光、CPU/GPU 差异、预览与成片差异）、调参与新增乳剂/空间效果的步骤、测试清单与已知限制。运行行为没有变化。
 - **v1.12.5** —— 修 iPhone 影集批量删除后取景画面卡死：关闭暗房抽屉时统一唤醒预览（恢复 requestAnimationFrame 运行状态、重算画布、`play()` 视频，镜头轨道真的断开则自动重连）；批量删除的系统确认框关闭后、分享结束或从后台切回时也做同样检查。iOS 静默回收 WebGL 上下文时每帧检测并自动退回 Canvas2D；视频被系统暂停时由预览循环低频补一次 `play()`，不再需要重新进页面。

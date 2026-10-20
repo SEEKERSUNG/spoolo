@@ -953,10 +953,82 @@
       .catch(function () { return false; });
   }
 
+  /* 两个标签页同时按快门时，各自内存里的 prefs 可能都是同一格。
+     用 Web Locks 把「读编号→抓帧→写编号」串行化；拿锁后再从 localStorage
+     同步 roll/frame，第二页自然会拿到下一格。 */
+  var captureLockName = 'spoolo-capture';
+
+  function syncFrameFromStorage() {
+    try {
+      var raw = localStorage.getItem(PREFS_KEY);
+      if (!raw) return;
+      var p = JSON.parse(raw);
+      var roll = clampInt(p.roll, 1, 9999, prefs.roll);
+      var frame = clampInt(p.frame, 1, FRAMES_PER_ROLL, prefs.frame);
+      if (roll > prefs.roll || (roll === prefs.roll && frame > prefs.frame)) {
+        prefs.roll = roll;
+        prefs.frame = frame;
+        updateCounter();
+      }
+    } catch (e) { /* 另一个标签可能正在写，读失败就保持本页状态 */ }
+  }
+
+  function releaseCaptureLock(release) {
+    if (!release) return;
+    var fn = release;
+    release = null;
+    try { fn(); } catch (e) { /* 锁已释放 */ }
+  }
+
   function captureShot() {
     if (state.busy) return;
     if (state.rewinding) { toast('正在回卷，等新卷上好再拍'); return; }
     state.busy = true;
+
+    var start = function (release) {
+      try { runCapture(release); }
+      catch (e) {
+        releaseCaptureLock(release);
+        state.busy = false;
+        toast('这一帧没能拍下来，请重试');
+      }
+    };
+
+    if (navigator.locks && navigator.locks.request) {
+      navigator.locks.request(captureLockName, function () {
+        syncFrameFromStorage();
+        return new Promise(function (release) { start(release); });
+      }).catch(function () {
+        state.busy = false;
+        toast('这一帧没能拍下来，请重试');
+      });
+    } else {
+      syncFrameFromStorage();
+      start(null);
+    }
+  }
+
+  function runCapture(release) {
+    /* 等锁期间用户可能已经回卷/打开灯箱/换图源，拿锁后重新确认 */
+    if (!state.busy) { releaseCaptureLock(release); return; }
+    if (state.rewinding) {
+      releaseCaptureLock(release);
+      state.busy = false;
+      toast('正在回卷，等新卷上好再拍');
+      return;
+    }
+    if (el.lightbox.open) {
+      releaseCaptureLock(release);
+      state.busy = false;
+      return;
+    }
+    if (!activeSource()) {
+      releaseCaptureLock(release);
+      state.busy = false;
+      toast('还没有画面：先允许镜头，或导入一张底片');
+      return;
+    }
+
     /* 快门按下的一刻就把这一格定下来：之后的冲印动画、换卷、日期开关
        都不能再改写它的卷号 / 张号 / 乳剂 / EV / 日期打印 */
     var capture = {
@@ -968,17 +1040,17 @@
     };
     var flash = flashShouldFire();
 
-    if (!flash) { takeShot(capture, ''); return; }
+    if (!flash) { takeShot(capture, '', null, release); return; }
 
     var track = torchTrack();
     if (track) {
       setTorch(track, true).then(function (ok) {
         if (ok) {
           /* 给 LED 一点时间把画面照亮 */
-          setTimeout(function () { takeShot(capture, 'torch', track); }, 180);
+          setTimeout(function () { takeShot(capture, 'torch', track, release); }, 180);
         } else {
           fireFlash();
-          setTimeout(function () { takeShot(capture, 'screen'); }, 120);
+          setTimeout(function () { takeShot(capture, 'screen', null, release); }, 120);
         }
       });
       return;
@@ -986,10 +1058,10 @@
 
     /* 没有硬件 torch：整屏闪白补光 */
     fireFlash();
-    setTimeout(function () { takeShot(capture, 'screen'); }, 120);
+    setTimeout(function () { takeShot(capture, 'screen', null, release); }, 120);
   }
 
-  function takeShot(capture, flashKind, torch) {
+  function takeShot(capture, flashKind, torch, release) {
     var shot;
     var film = capture.film;
     fireShutter();
@@ -997,6 +1069,7 @@
       shot = grabFrame();
     } catch (e) {
       if (torch) setTorch(torch, false);
+      releaseCaptureLock(release);
       state.busy = false;
       toast('这一帧没能拍下来，请重试');
       return;
@@ -1006,6 +1079,8 @@
     /* 画面已经抓到手，立刻落盘编号：即使随后刷新 / 关页，下一次也不会
        重复使用同一个 ROLL / # 号；若期间用户已经回卷，则只记录旧卷，不动新卷 */
     advanceFrame(capture);
+    /* 编号已经写进 localStorage，可以让下一个标签页/下一次快门拿锁了 */
+    releaseCaptureLock(release);
 
     var seed = (Math.random() * 100000) | 0;
     /* 硬件 LED 已经补过光，成片里只留一点暖调；屏幕补光保留完整模拟 */
@@ -1164,7 +1239,7 @@
     state.rewinding = true;
     el.shutter.disabled = true;
     /* 先落盘新卷：1.85s 动画期间关页/刷新也不会重复上一张的编号 */
-    prefs.roll += 1;
+    prefs.roll = Math.min(9999, prefs.roll + 1);
     prefs.frame = 1;
     savePrefs();
     var knob = $('#rewind');
@@ -1322,7 +1397,21 @@
   }
 
   function refreshAlbum() {
-    return Store.all().then(paintAlbum);
+    return Store.all().then(function (rows) {
+      paintAlbum(rows);
+      /* 存储整体不可用时已经由 onPersistentChange 给过“存储不可用”提示，
+         这里不要再把那条更重要的提示覆盖掉；只在存储本身仍可用、
+         但这次列表读取异常时提示。 */
+      if (Store.lastListFailed && Store.persistent) {
+        if (!rows.length) {
+          el.albumStat.textContent = '存储读取失败 · 刷新重试';
+          toast('存储读取失败，请刷新重试');
+        } else {
+          toast('存储读取异常，已使用备用读取');
+        }
+      }
+      return rows;
+    });
   }
 
   /* 复制成独立的 Blob：撤销时写回副本，不再碰已经被删除的 IndexedDB Blob */
