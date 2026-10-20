@@ -1,6 +1,6 @@
 # SPOOLO 技术文档
 
-> 适用版本：**v1.12.8**
+> 适用版本：**v1.13.0**
 > 面向：准备接手维护、调整色彩、增加乳剂或排查移动端问题的开发者。
 > 建议阅读顺序：`README.md` → 本文第 1～3 节 → `js/films.js` → `js/gpu-develop.js` → `js/app.js` 的冲印部分。
 
@@ -17,7 +17,7 @@ SPOOLO 是一台纯静态的网页 135 胶片相机。没有构建步骤、没�
 | `index.html` | 机身 DOM、胶卷仓、控制台、暗房/影集、灯箱、冲印遮罩、Toast |
 | `css/base.css` | 设计令牌、布局、机身/取景器、响应式断点、取景器 CSS 覆盖层 |
 | `css/ui.css` | 旋钮、功能键、快门、胶卷卡、影集、批量条、抽屉、灯箱、Toast 等组件 |
-| `js/films.js` | 16 种乳剂预设、LUT/曲线、CPU 像素管线、颗粒/光晕/暗角/漏光/闪光算法 |
+| `js/films.js` | 27 种乳剂预设、LUT/曲线、CPU 像素管线、颗粒/光晕/暗角/漏光/闪光算法 |
 | `js/gpu-develop.js` | 成片 WebGL 管线：色彩 → 亮部遮罩 → 高斯模糊 → 合成 |
 | `js/store.js` | IndexedDB 影集存储（失败降级到内存） |
 | `js/zip.js` | 桌面批量保存用的 store-only ZIP（CRC32，不压缩 JPEG） |
@@ -59,7 +59,7 @@ films.js → store.js → gpu-develop.js → zip.js → app.js
 
 - **纯静态**：`python -m http.server` 或 GitHub Pages 即可；不要引入打包器、框架或后端。
 - **无第三方运行时依赖**：字体是唯一的外部资源，且失败时必须有回退字体。
-- **色彩是显示参考（display-referred）**：所有像素按 sRGB 8-bit 直接计算，不做线性化、ICC 或色域转换；这是为了让 16 种“胶片感”参数可手调、可预期，而不是做色彩管理。改管线前先接受这个前提。
+- **色彩是显示参考（display-referred）**：所有像素按 sRGB 8-bit 直接计算，不做线性化、ICC 或色域转换；这是为了让 27 种“胶片感”参数可手调、可预期，而不是做色彩管理。改管线前先接受这个前提。
 - **移动优先**：主要使用场景是手机竖屏；桌面是第二布局。
 - **iOS Safari 是特殊环境**：摄像头、闪光灯、分享、WebGL 上下文、IndexedDB Blob 都有各自的坑，代码里保留了多条兜底路径。
 
@@ -87,7 +87,7 @@ films.js → store.js → gpu-develop.js → zip.js → app.js
 
 **第一层：色彩引擎（`films.js`）**
 
-- `SPOOLO.FILMS`：16 个乳剂对象。
+- `SPOOLO.FILMS`：27 个乳剂对象。
 - `SPOOLO.buildLUT(film, ev)`：按乳剂和 EV 生成 256 级 LUT。
 - `SPOOLO.render(data, w, h, film, opts)`：CPU 版完整像素管线，原地修改 RGBA `Uint8ClampedArray`。
 - `SPOOLO.meters(film)`：把乳剂参数映射成 UI 上的 1–5 格指标，仅用于展示。
@@ -129,7 +129,7 @@ SPOOLO.render(pixels, w, h, SPOOLO.FILMS[6], { ev: 0, grain: true, seed: 1 })
 
 `app.js` 的 `init()` 做这些事：
 
-1. `renderFilmList()`：生成 16 张乳剂卡，写入旋钮的 `aria-valuemax`。
+1. `renderFilmList()`：生成 27 张乳剂卡，写入旋钮的 `aria-valuemax`。
 2. `setFilm(prefs.film, { silent: true })`：恢复上次乳剂、写 LUT、更新预览。
 3. 恢复网格/日期/声音/定时/闪光/EV/卷号/张号。
 4. `bindControls()`：所有事件。
@@ -313,7 +313,7 @@ luma = r*0.2126 + g*0.7152 + b*0.0722
 - **不进行线性化/去 gamma**。所有对比、饱和、混合都直接在显示空间做。这意味着：
   - 参数组合是“看起来对”的经验值，不是物理光照模型；
   - 调整某个乳剂时，直接看取景/成片，不要按线性光公式推导；
-  - 若未来要引入线性工作流，必须同时重调全部 16 个预设，不能只改一处。
+  - 若未来要引入线性工作流，必须同时重调全部 27 个预设，不能只改一处。
 
 ### 4.2 乳剂参数模型
 
@@ -632,7 +632,7 @@ b += fa * 0.86;
 ```
 
 2. 黑白乳剂加 `bw: true`，把 `contrast/lift/gamma/gain` 写成标量，不写 `sat/vibrance/halation`。
-3. 胶片数量会自动更新：`renderFilmList()` 设置 `#filmCount`，旋钮的 `aria-valuemax` 也按 `FILMS.length` 写；不需要改 HTML 里的 16。
+3. 胶片数量会自动更新：`renderFilmList()` 设置 `#filmCount`，旋钮的 `aria-valuemax` 也按 `FILMS.length` 写；不需要改 HTML 里的 27。
 4. 更新 `README.md` 的乳剂表和版本号；同步顶盖/页脚/`?v=`。
 5. 用至少这些素材测试：灰卡（看颗粒和 banding）、肤色（看低饱和/高光）、蓝天（看分通道 LUT）、霓虹（看 halation/漏光）、黑白（看 luma 曲线）。
 6. 同时看取景和成片；再禁用 WebGL 检查 CPU 兜底。
@@ -815,7 +815,7 @@ python -m http.server 8123
 
 **拍摄主链路**
 
-- 16 种乳剂各拍一张，编码/尺寸正确。
+- 27 种乳剂各拍一张，编码/尺寸正确。
 - EV 到 ±2.0，预览/成片变化一致。
 - 3s / 10s 定时；倒计时中切“关”应取消。
 - 强制闪光、自动闪光（暗图触发、亮图不触发）。

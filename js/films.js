@@ -190,6 +190,122 @@
       shoulder: 0.74,
       halation: { amount: 0.22, radius: 11, threshold: 0.66, color: [1, 0.44, 0.30] },
       grain: { amount: 0.062, size: 1, shadow: 1.8 }, vignette: 0.24, leak: 0
+    },
+    {
+      code: 'PM-400', name: '粉彩薄荷', en: 'PASTEL MINT', process: 'C-41', iso: 400,
+      note: '薄荷色的空气感：黑位轻抬、反差极低，肤色像蒙了一层薄雾。',
+      tone: '#a9c0b4',
+      contrast: [0.90, 0.91, 0.91], lift: [0.028, 0.032, 0.032],
+      gamma: [0.98, 0.99, 1.00], gain: [1.00, 1.02, 1.02],
+      sat: 0.86, vibrance: 0.10,
+      shadowTint: [0.000, 0.014, 0.020], highTint: [0.012, 0.008, 0.010],
+      shoulder: 0.66,
+      halation: { amount: 0.12, radius: 8, threshold: 0.75, color: [1, 0.50, 0.36] },
+      grain: { amount: 0.026, size: 1, shadow: 1.2 }, vignette: 0.13, leak: 0
+    },
+    {
+      code: 'ER-200', name: '欧陆赤调', en: 'EURO RED', process: 'C-41', iso: 200,
+      note: '欧陆底片的赤红体温：红先声夺人，蓝绿退后半步。',
+      tone: '#b44a33',
+      contrast: [1.10, 1.01, 0.95], lift: [0.010, 0.012, 0.014],
+      gamma: [0.98, 1.00, 1.01], gain: [1.08, 0.99, 0.93],
+      sat: 1.20, vibrance: 0.16,
+      shadowTint: [0.018, 0.000, 0.002], highTint: [0.030, 0.004, -0.016],
+      shoulder: 0.70,
+      halation: { amount: 0.17, radius: 9, threshold: 0.71, color: [1, 0.36, 0.22] },
+      grain: { amount: 0.068, size: 1, shadow: 1.9 }, vignette: 0.23, leak: 0
+    },
+    {
+      code: 'NH-1600', name: '高感暖光', en: 'AVAILABLE LIGHT', process: 'C-41', iso: 1600,
+      note: '把路灯和室内灯当太阳：高感、暖调，颗粒像砂纸。',
+      tone: '#c08a62',
+      contrast: [0.96, 0.95, 0.94], lift: [0.030, 0.026, 0.030],
+      gamma: [1.00, 0.99, 0.98], gain: [1.06, 1.00, 1.00],
+      sat: 1.02, vibrance: 0.12,
+      shadowTint: [0.016, 0.000, 0.010], highTint: [0.026, 0.006, -0.008],
+      shoulder: 0.78,
+      halation: { amount: 0.34, radius: 13, threshold: 0.58, color: [1, 0.38, 0.24] },
+      grain: { amount: 0.115, size: 1, shadow: 2.4 }, vignette: 0.26, leak: 0
+    },
+    {
+      code: 'CT-100', name: '中性正片', en: 'NEUTRAL CHROME', process: 'E-6', iso: 100,
+      note: '中性通透的现代反转片：颜色准、颗粒极细，亮部干净又有细节。',
+      tone: '#4b7fa8',
+      contrast: [1.12, 1.10, 1.08], lift: [0.002, 0.002, 0.004],
+      gamma: [0.99, 1.00, 1.00], gain: [1.01, 1.01, 1.03],
+      sat: 1.12, vibrance: 0.22,
+      shadowTint: [-0.006, 0.004, 0.014], highTint: [0.010, 0.004, 0.006],
+      shoulder: 0.80,
+      halation: { amount: 0.08, radius: 6, threshold: 0.82, color: [1, 0.42, 0.28] },
+      grain: { amount: 0.024, size: 1, shadow: 1.2 }, vignette: 0.12, leak: 0
+    },
+    {
+      code: 'SF-100', name: '柔调正片', en: 'SOFT CHROME', process: 'E-6', iso: 100,
+      note: '柔和的正片：肤色准确、高光柔顺，像自然光婚礼的底片。',
+      tone: '#c9b9a8',
+      contrast: [0.98, 0.97, 0.96], lift: [0.006, 0.006, 0.008],
+      gamma: [1.00, 1.00, 1.01], gain: [1.01, 1.00, 0.99],
+      sat: 1.02, vibrance: 0.10,
+      shadowTint: [0.004, 0.006, 0.010], highTint: [0.012, 0.008, 0.004],
+      shoulder: 0.72,
+      halation: { amount: 0.10, radius: 7, threshold: 0.78, color: [1, 0.48, 0.32] },
+      grain: { amount: 0.022, size: 1, shadow: 1.2 }, vignette: 0.10, leak: 0
+    },
+    {
+      code: 'DY-250', name: '日光电影', en: 'DAYLIGHT CINE', process: 'ECN-2', iso: 250,
+      note: '日光电影负片：低反差、宽容度大，肤色中性偏暖，高光很耐拉。',
+      tone: '#6f8f86',
+      contrast: [0.94, 0.93, 0.92], lift: [0.020, 0.018, 0.016],
+      gamma: [1.00, 1.00, 1.01], gain: [1.02, 1.00, 0.98],
+      sat: 0.98, vibrance: 0.14,
+      shadowTint: [0.004, 0.010, 0.016], highTint: [0.014, 0.008, -0.006],
+      shoulder: 0.62,
+      halation: { amount: 0.16, radius: 8, threshold: 0.72, color: [1, 0.48, 0.30] },
+      grain: { amount: 0.048, size: 1, shadow: 1.7 }, vignette: 0.10, leak: 0
+    },
+    {
+      code: 'TN-500', name: '钨丝电影', en: 'TUNGSTEN CINE', process: 'ECN-2', iso: 500,
+      note: '钨丝电影负片：青蓝阴影配暖高光，低反差、宽容度大，夜色干净。',
+      tone: '#3f6f8f',
+      contrast: [0.96, 0.95, 0.94], lift: [0.024, 0.026, 0.030],
+      gamma: [1.00, 1.00, 0.99], gain: [0.99, 1.00, 1.03],
+      sat: 1.02, vibrance: 0.16,
+      shadowTint: [-0.010, 0.002, 0.020], highTint: [0.016, 0.002, 0.004],
+      shoulder: 0.66,
+      halation: { amount: 0.14, radius: 9, threshold: 0.70, color: [1, 0.46, 0.30] },
+      grain: { amount: 0.058, size: 1, shadow: 1.8 }, vignette: 0.14, leak: 0
+    },
+    {
+      code: 'NG-3200', name: '夜间颗粒', en: 'NIGHT GRAIN', process: 'B&W', iso: 3200,
+      note: '高感粗粒，暗部发灰，夜拍和演唱会专用的噪点质感。',
+      tone: '#5e5b55', bw: true,
+      contrast: 1.12, lift: 0.018, gamma: 1.00, gain: 1.02, shoulder: 0.80,
+      shadowTint: [0.004, 0.003, 0.007], highTint: [0.005, 0.005, 0.004],
+      grain: { amount: 0.160, size: 1, shadow: 2.4 }, vignette: 0.30, leak: 0
+    },
+    {
+      code: 'XC-400', name: '宽容黑白', en: 'LATITUDE MONO', process: 'C-41', iso: 400,
+      note: 'C-41 染料型黑白，宽容度极高，高光柔和、阴影轻。',
+      tone: '#7f8386', bw: true,
+      contrast: 0.94, lift: 0.014, gamma: 1.02, gain: 0.99, shoulder: 0.66,
+      shadowTint: [0.000, 0.002, 0.006], highTint: [0.003, 0.004, 0.003],
+      grain: { amount: 0.038, size: 1, shadow: 1.2 }, vignette: 0.12, leak: 0
+    },
+    {
+      code: 'PN-50', name: '锐利细粒', en: 'CRISP MONO', process: 'B&W', iso: 50,
+      note: '50 度极细颗粒，中高反差，三脚架风光的硬朗黑白。',
+      tone: '#8c8f92', bw: true,
+      contrast: 1.34, lift: -0.004, gamma: 0.98, gain: 1.03, shoulder: 0.78,
+      shadowTint: [0.002, 0.002, 0.004], highTint: [0.006, 0.006, 0.006],
+      grain: { amount: 0.018, size: 1, shadow: 1.1 }, vignette: 0.16, leak: 0
+    },
+    {
+      code: 'WT-200', name: '棕调暖黑白', en: 'WARM TONE MONO', process: 'B&W', iso: 200,
+      note: '暖调相纸式黑白，阴影偏棕、高光乳白，像手工放大的旧照片。',
+      tone: '#a8825c', bw: true,
+      contrast: 1.08, lift: 0.022, gamma: 1.04, gain: 0.97, shoulder: 0.68,
+      shadowTint: [0.012, 0.005, -0.003], highTint: [0.030, 0.016, -0.012],
+      grain: { amount: 0.055, size: 1, shadow: 1.7 }, vignette: 0.22, leak: 0
     }
   ];
 
