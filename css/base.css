@@ -773,19 +773,17 @@ button, input, select { font: inherit; color: inherit; }
   z-index: 600;
   pointer-events: none;
   opacity: 0;
+  /* 屏幕补光是实际光源：整屏纯白，避免边缘透明削弱照明 */
   background: #fff;
-  background: radial-gradient(circle at 50% 44%,
-    oklch(100% 0 0) 0%, oklch(99% 0.015 85 / 0.95) 38%,
-    oklch(96% 0.035 80 / 0.62) 72%, transparent 100%);
   mix-blend-mode: screen;
   will-change: opacity;
   transform: translateZ(0);
 }
-.flash-fx.firing { animation: flash-pop 240ms var(--ease-out) both; }
+.flash-fx.firing { animation: flash-pop 720ms var(--ease-out) both; }
 @keyframes flash-pop {
   0% { opacity: 0; }
-  6% { opacity: 1; }
-  50% { opacity: 1; }
+  7% { opacity: 1; }
+  70% { opacity: 1; }
   100% { opacity: 0; }
 }
 .countdown {
@@ -837,5 +835,10 @@ button, input, select { font: inherit; color: inherit; }
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  /* 屏幕补光是拍摄功能，不是装饰动画：减少动态时保持稳定白屏 */
+  .flash-fx.firing {
+    animation: none !important;
+    opacity: 1;
   }
 }

@@ -897,23 +897,33 @@
     setTimeout(function () { el.frameBox.classList.remove('firing'); }, 320);
   }
 
+  var flashTimer = null;
   function fireFlash() {
+    clearTimeout(flashTimer);
     el.flashFx.classList.remove('firing');
     void el.flashFx.offsetWidth;
     el.flashFx.classList.add('firing');
-    setTimeout(function () { el.flashFx.classList.remove('firing'); }, 260);
+    /* 和 CSS 的 720ms 动画对齐：让屏幕白屏持续足够久，给摄像头 AE 反应时间 */
+    flashTimer = setTimeout(function () { el.flashFx.classList.remove('firing'); }, 760);
   }
 
-  /* 自动闪光：用一张很小的离屏画布抽样，不依赖预览上下文 */
+  /* 自动闪光/闪光补救共用的小样本亮度计，不依赖预览上下文 */
   var lumaCanvas = document.createElement('canvas');
   lumaCanvas.width = 48;
   lumaCanvas.height = 36;
-  function sceneLuma() {
-    var src = activeSource();
+  var flashHintShown = false;
+  function sampleLuma(src, centerOnly) {
     if (!src) return 0.5;
     try {
       var lc = lumaCanvas.getContext('2d', { willReadFrequently: true });
-      lc.drawImage(src, 0, 0, 48, 36);
+      var sw = src.videoWidth || src.naturalWidth || src.width || 0;
+      var sh = src.videoHeight || src.naturalHeight || src.height || 0;
+      if (centerOnly && sw && sh) {
+        /* 闪光补救只看画面中心，避免“暗背景 + 亮主体”被整体拉爆 */
+        lc.drawImage(src, sw * 0.25, sh * 0.25, sw * 0.5, sh * 0.5, 0, 0, 48, 36);
+      } else {
+        lc.drawImage(src, 0, 0, 48, 36);
+      }
       var d = lc.getImageData(0, 0, 48, 36).data;
       var sum = 0, n = 0;
       for (var i = 0; i < d.length; i += 4) {
@@ -925,6 +935,7 @@
       return 0.5;
     }
   }
+  function sceneLuma() { return sampleLuma(activeSource()); }
 
   function flashShouldFire() {
     if (prefs.flash === 2) return true;
@@ -1046,91 +1057,126 @@
     if (track) {
       setTorch(track, true).then(function (ok) {
         if (ok) {
-          /* 给 LED 一点时间把画面照亮 */
-          setTimeout(function () { takeShot(capture, 'torch', track, release); }, 180);
+          /* 给 LED 和摄像头 AE 更多时间适应 */
+          setTimeout(function () { takeShot(capture, 'torch', track, release); }, 200);
         } else {
           fireFlash();
-          setTimeout(function () { takeShot(capture, 'screen', null, release); }, 120);
+          setTimeout(function () { takeShot(capture, 'screen', null, release); }, 160);
         }
       });
       return;
     }
 
-    /* 没有硬件 torch：整屏闪白补光 */
+    /* 没有硬件 torch：整屏闪白补光；保持更久，让摄像头 AE 有时间适应 */
     fireFlash();
-    setTimeout(function () { takeShot(capture, 'screen', null, release); }, 120);
+    setTimeout(function () { takeShot(capture, 'screen', null, release); }, 160);
   }
 
   function takeShot(capture, flashKind, torch, release) {
-    var shot;
     var film = capture.film;
+    var best = null, bestLuma = -1, tries = 0;
+
     fireShutter();
-    try {
-      shot = grabFrame();
-    } catch (e) {
+
+    function finish() {
       if (torch) setTorch(torch, false);
+      if (!best) {
+        releaseCaptureLock(release);
+        state.busy = false;
+        toast('这一帧没能拍下来，请重试');
+        return;
+      }
+
+      /* 画面已经抓到手，立刻落盘编号：即使随后刷新 / 关页，下一次也不会
+         重复使用同一个 ROLL / # 号；若期间用户已经回卷，则只记录旧卷，不动新卷 */
+      advanceFrame(capture);
+      /* 编号已经写进 localStorage，可以让下一个标签页/下一次快门拿锁了 */
       releaseCaptureLock(release);
-      state.busy = false;
-      toast('这一帧没能拍下来，请重试');
-      return;
-    }
-    if (torch) setTorch(torch, false);
 
-    /* 画面已经抓到手，立刻落盘编号：即使随后刷新 / 关页，下一次也不会
-       重复使用同一个 ROLL / # 号；若期间用户已经回卷，则只记录旧卷，不动新卷 */
-    advanceFrame(capture);
-    /* 编号已经写进 localStorage，可以让下一个标签页/下一次快门拿锁了 */
-    releaseCaptureLock(release);
+      var seed = (Math.random() * 100000) | 0;
+      /* 硬件 LED 已经补过光，成片里只留一点暖调；屏幕补光保留完整模拟 */
+      var flashAmt = flashKind === 'torch' ? 0.35 : flashKind === 'screen' ? 1 : 0;
+      /* 闪光后仍然很暗：按平均亮度补回曝光，避免整张死黑。
+         这是软件补救，不能替代真正的补光；后摄屏幕补光无法照亮前方。 */
+      var rescueEv = 0;
+      if (flashKind && bestLuma < 0.12) {
+        rescueEv = Math.min(4, Math.max(0, Math.log2(0.18 / Math.max(bestLuma, 0.01))));
+      }
+      var hint = flashKind === 'screen' && state.source === 'camera' &&
+        state.facing === 'environment' && bestLuma < 0.12 && !flashHintShown;
+      if (hint) flashHintShown = true;
 
-    var seed = (Math.random() * 100000) | 0;
-    /* 硬件 LED 已经补过光，成片里只留一点暖调；屏幕补光保留完整模拟 */
-    var flashAmt = flashKind === 'torch' ? 0.35 : flashKind === 'screen' ? 1 : 0;
-
-    openProcessing(film, function () {
-      develop(shot.canvas, shot.W, shot.H, film, {
-        ev: capture.ev, halation: true, grain: true, vignette: true, leak: true,
-        seed: seed, dateStamp: capture.date, flash: flashAmt
-      });
-      return toBlob(shot.canvas, 0.92).then(function (blob) {
-        if (!blob) throw new Error('jpeg-encode-failed');
-        /* 缩略图直接从这张冲印完成的原图缩放：颗粒、日期、光晕都已经是成品，
-           不再对缩略图二次计算噪点，图案与灯箱成片同源 */
-        return scaledThumb(shot.canvas).catch(function () { return null; }).then(function (thumb) {
-          var frame = {
-            id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
-            roll: capture.roll,
-            frameNo: capture.frameNo,
-            code: film.code,
-            name: film.name,
-            en: film.en,
-            iso: film.iso,
-            ev: capture.ev,
-            flash: flashKind ? 1 : 0,
-            flashKind: flashKind,
-            w: shot.W,
-            h: shot.H,
-            date: capture.date,
-            ts: Date.now(),
-            blob: blob,
-            thumb: thumb || blob,
-            /* 记录缩略图实际宽度；旧底片没有这个字段，打开影集时会按需重建 */
-            thumbW: thumb ? Math.min(THUMB_W, shot.W) : shot.W
-          };
-          return Store.add(frame).then(function () {
-            frame.persisted = Store.lastAddPersisted !== false;
-            return frame;
+      openProcessing(film, function () {
+        develop(best.canvas, best.W, best.H, film, {
+          ev: capture.ev + rescueEv, halation: true, grain: true, vignette: true, leak: true,
+          seed: seed, dateStamp: capture.date, flash: flashAmt
+        });
+        return toBlob(best.canvas, 0.92).then(function (blob) {
+          if (!blob) throw new Error('jpeg-encode-failed');
+          /* 缩略图直接从这张冲印完成的原图缩放：颗粒、日期、光晕都已经是成品，
+             不再对缩略图二次计算噪点，图案与灯箱成片同源 */
+          return scaledThumb(best.canvas).catch(function () { return null; }).then(function (thumb) {
+            var frame = {
+              id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
+              roll: capture.roll,
+              frameNo: capture.frameNo,
+              code: film.code,
+              name: film.name,
+              en: film.en,
+              iso: film.iso,
+              ev: capture.ev,
+              flash: flashKind ? 1 : 0,
+              flashKind: flashKind,
+              w: best.W,
+              h: best.H,
+              date: capture.date,
+              ts: Date.now(),
+              blob: blob,
+              thumb: thumb || blob,
+              /* 记录缩略图实际宽度；旧底片没有这个字段，打开影集时会按需重建 */
+              thumbW: thumb ? Math.min(THUMB_W, best.W) : best.W
+            };
+            return Store.add(frame).then(function () {
+              frame.persisted = Store.lastAddPersisted !== false;
+              return frame;
+            });
           });
         });
+      }).then(function (frame) {
+        state.busy = false;
+        if (!frame) return;
+        if (frame.persisted === false) toast('存储不可用 · 这张只在本次会话');
+        if (hint) toast('后摄无法用屏幕补光 · 夜拍请靠近光源或用前摄');
+        refreshAlbum();
+      }).catch(function () {
+        state.busy = false;
+        toast('冲印失败，请再试一次');
       });
-    }).then(function (frame) {
-      state.busy = false;
-      if (!frame) return;
-      if (frame.persisted === false) toast('存储不可用 · 这张只在本次会话');
-      refreshAlbum();
-    }).catch(function () {
-      state.busy = false;
-      toast('冲印失败，请再试一次');
-    });
+    }
+
+    function grab() {
+      var shot;
+      try {
+        shot = grabFrame();
+      } catch (e) {
+        finish();
+        return;
+      }
+      var lum = sampleLuma(shot.canvas, true);
+      if (!best || lum > bestLuma) {
+        best = shot;
+        bestLuma = lum;
+      }
+      /* 闪光已亮但画面仍然暗：再取一帧更晚的（AE 可能还在调整） */
+      if (flashKind && bestLuma < 0.12 && tries < 1) {
+        tries++;
+        setTimeout(grab, 300);
+        return;
+      }
+      finish();
+    }
+
+    grab();
   }
 
   /* 从当前源裁出与取景窗同比例的一帧 */
