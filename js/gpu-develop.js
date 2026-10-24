@@ -72,6 +72,38 @@
     '}'
   ].join('\n');
 
+  /* P2 镜头：中心锐利，越靠边越柔，R/B 通道沿径向反向偏移形成横向色差。
+     softness / ca 单位是 1080px 短边时的像素，由 JS 按成片尺寸缩放。 */
+  var LENS_FS = PRECISION + [
+    'varying vec2 vUv;',
+    'uniform sampler2D uColor;',
+    'uniform vec2 uRes;',
+    'uniform float uSoft, uCA;',
+    'vec3 softSample(vec2 uv, float soft){',
+    '  if (soft < 0.001) return texture2D(uColor, clamp(uv, 0.0, 1.0)).rgb;',
+    '  vec2 o = vec2(soft) / uRes;',
+    '  return 0.25 * (',
+    '    texture2D(uColor, clamp(uv + vec2(o.x, 0.0), 0.0, 1.0)).rgb +',
+    '    texture2D(uColor, clamp(uv - vec2(o.x, 0.0), 0.0, 1.0)).rgb +',
+    '    texture2D(uColor, clamp(uv + vec2(0.0, o.y), 0.0, 1.0)).rgb +',
+    '    texture2D(uColor, clamp(uv - vec2(0.0, o.y), 0.0, 1.0)).rgb',
+    '  );',
+    '}',
+    'void main(){',
+    '  vec2 p = (vUv - 0.5) * uRes;',
+    '  float rr = dot(p, p) / dot(uRes * 0.5, uRes * 0.5);',
+    '  float pl = length(p);',
+    '  vec2 dir = pl > 0.0001 ? p / pl : vec2(0.0);',
+    '  float soft = uSoft * rr;',
+    '  float ca = uCA * rr;',
+    '  vec2 off = dir * ca / uRes;',
+    '  vec3 cr = softSample(vUv + off, soft);',
+    '  vec3 cg = softSample(vUv, soft);',
+    '  vec3 cb = softSample(vUv - off, soft);',
+    '  gl_FragColor = vec4(cr.r, cg.g, cb.b, 1.0);',
+    '}'
+  ].join('\n');
+
   var BRIGHT_FS = PRECISION + [
     'varying vec2 vUv;',
     'uniform sampler2D uColor;',
@@ -214,10 +246,11 @@
     if (!gl) return null;
 
     var colorP = makeProgram(gl, COLOR_FS);
+    var lensP = makeProgram(gl, LENS_FS);
     var brightP = makeProgram(gl, BRIGHT_FS);
     var blurP = makeProgram(gl, BLUR_FS);
     var compP = makeProgram(gl, COMP_FS);
-    if (!colorP || !brightP || !blurP || !compP) return null;
+    if (!colorP || !lensP || !brightP || !blurP || !compP) return null;
 
     var U = {
       color: {
@@ -237,6 +270,12 @@
         hueP1: gl.getUniformLocation(colorP, 'uHueP1'),
         hueA2: gl.getUniformLocation(colorP, 'uHueA2'),
         hueP2: gl.getUniformLocation(colorP, 'uHueP2')
+      },
+      lens: {
+        src: gl.getUniformLocation(lensP, 'uColor'),
+        res: gl.getUniformLocation(lensP, 'uRes'),
+        soft: gl.getUniformLocation(lensP, 'uSoft'),
+        ca: gl.getUniformLocation(lensP, 'uCA')
       },
       bright: {
         color: gl.getUniformLocation(brightP, 'uColor'),
@@ -285,6 +324,8 @@
     gl.useProgram(colorP);
     gl.uniform1i(U.color.src, 0);
     gl.uniform1i(U.color.lut, 1);
+    gl.useProgram(lensP);
+    gl.uniform1i(U.lens.src, 0);
     gl.useProgram(brightP);
     gl.uniform1i(U.bright.color, 0);
     gl.useProgram(blurP);
@@ -299,6 +340,7 @@
     var W = 0, H = 0, HW = 0, HH = 0;
     var srcTex = null, lutTex = null, noiseTex = null, noiseSoftTex = null, noiseData = null;
     var colorT = null, colorFbo = null;
+    var lensT = null, lensFbo = null;
     var maskA = null, maskAFbo = null;
     var maskB = null, maskBFbo = null;
     var maskC = null, maskCFbo = null;
@@ -371,10 +413,10 @@
     }
 
     function dispose() {
-      [srcTex, lutTex, colorT, maskA, maskB, maskC].forEach(function (t) { if (t) gl.deleteTexture(t); });
-      [colorFbo, maskAFbo, maskBFbo, maskCFbo].forEach(function (f) { if (f) gl.deleteFramebuffer(f); });
-      srcTex = lutTex = colorT = maskA = maskB = maskC = null;
-      colorFbo = maskAFbo = maskBFbo = maskCFbo = null;
+      [srcTex, lutTex, colorT, lensT, maskA, maskB, maskC].forEach(function (t) { if (t) gl.deleteTexture(t); });
+      [colorFbo, lensFbo, maskAFbo, maskBFbo, maskCFbo].forEach(function (f) { if (f) gl.deleteFramebuffer(f); });
+      srcTex = lutTex = colorT = lensT = maskA = maskB = maskC = null;
+      colorFbo = lensFbo = maskAFbo = maskBFbo = maskCFbo = null;
     }
 
     function ensureSize(w, h) {
@@ -390,6 +432,8 @@
       srcTex = tex(w, h, gl.LINEAR);
       colorT = tex(w, h, gl.LINEAR);
       colorFbo = fbo(colorT);
+      lensT = tex(w, h, gl.LINEAR);
+      lensFbo = fbo(lensT);
       maskA = tex(HW, HH, gl.LINEAR);
       maskAFbo = fbo(maskA);
       maskB = tex(HW, HH, gl.LINEAR);
@@ -463,6 +507,24 @@
         gl.bindTexture(gl.TEXTURE_2D, lutTex);
         draw(colorFbo, W, H);
 
+        /* P2 镜头：柔化 + 横向色差，输出到 lensT；后面所有步骤都读这张 */
+        var lens = SP.lensModel ? SP.lensModel(film) : { softness: 0, ca: 0 };
+        var lensScale = Math.min(W, H) / 1080;
+        var lensSoft = lens.softness * lensScale;
+        var lensCA = lens.ca * lensScale;
+        var wantLens = !!opts.lens && (lensSoft > 0.01 || lensCA > 0.01);
+        var colorTex = colorT;
+        if (wantLens) {
+          gl.useProgram(lensP);
+          gl.uniform2f(U.lens.res, W, H);
+          gl.uniform1f(U.lens.soft, lensSoft);
+          gl.uniform1f(U.lens.ca, lensCA);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, colorT);
+          draw(lensFbo, W, H);
+          colorTex = lensT;
+        }
+
         var wantHalo = !!opts.halation && !!film.halation;
         var wantBloom = !!opts.bloom;
         var wantMask = wantHalo || wantBloom;
@@ -473,7 +535,7 @@
           gl.useProgram(brightP);
           gl.uniform1f(U.bright.thr, wantHalo ? film.halation.threshold : 0.72);
           gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, colorT);
+          gl.bindTexture(gl.TEXTURE_2D, colorTex);
           draw(maskAFbo, HW, HH);
 
           /* 3. 两轮可分离模糊，近似 CPU 的两遍盒式模糊 */
@@ -546,7 +608,7 @@
         gl.uniform1f(U.comp.flash, (opts.flash || 0) * 56 / 255);
 
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, colorT);
+        gl.bindTexture(gl.TEXTURE_2D, colorTex);
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, maskA || colorT);
         gl.activeTexture(gl.TEXTURE2);

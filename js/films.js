@@ -334,6 +334,22 @@
     };
   }
 
+  /* --- P2 镜头光学 -------------------------------------------------------
+     轻微的边缘柔化 + 横向色差（CA）：中心保持锐利，越靠边越明显。
+     单位是「1080px 短边时的像素」，成片会按短边等比缩放；这样 1080×1440
+     和 1920×1280 的镜头观感一致。黑白乳剂没有色差，只保留柔化。
+     乳剂可用 lens: { softness, ca } 覆盖；lens: false 整层关闭。 */
+  var LENS_MODEL = { softness: 0.8, ca: 0.8 };
+
+  function lensModel(film) {
+    if (film.lens === false) return { softness: 0, ca: 0 };
+    var l = film.lens || LENS_MODEL;
+    return {
+      softness: l.softness != null ? l.softness : LENS_MODEL.softness,
+      ca: film.bw ? 0 : (l.ca != null ? l.ca : LENS_MODEL.ca)
+    };
+  }
+
   /* --- 显示用指标（1-5 格）--------------------------------------------- */
   function meters(f) {
     var contrast = f.bw ? f.contrast * 0.98
@@ -410,6 +426,26 @@
   }
 
   /* --- 分离式盒式模糊（用于光晕）--------------------------------------- */
+  /* P2 镜头采样：最近邻用于柔化 taps，双线性用于色差中心，兼顾速度和边缘 */
+  function nearestAt(buf, w, h, x, y, ch) {
+    x = x < 0 ? 0 : x >= w ? w - 1 : x | 0;
+    y = y < 0 ? 0 : y >= h ? h - 1 : y | 0;
+    return buf[(y * w + x) * 4 + ch];
+  }
+  function bilinearAt(buf, w, h, x, y, ch) {
+    if (x < 0) x = 0; else if (x > w - 1) x = w - 1;
+    if (y < 0) y = 0; else if (y > h - 1) y = h - 1;
+    var x0 = x | 0, y0 = y | 0;
+    var x1 = x0 + 1 < w ? x0 + 1 : x0;
+    var y1 = y0 + 1 < h ? y0 + 1 : y0;
+    var fx = x - x0, fy = y - y0;
+    var i00 = (y0 * w + x0) * 4 + ch, i10 = (y0 * w + x1) * 4 + ch;
+    var i01 = (y1 * w + x0) * 4 + ch, i11 = (y1 * w + x1) * 4 + ch;
+    var a = buf[i00] + (buf[i10] - buf[i00]) * fx;
+    var b = buf[i01] + (buf[i11] - buf[i01]) * fx;
+    return a + (b - a) * fy;
+  }
+
   function boxBlur(buf, w, h, r, passes) {
     if (r < 1) return;
     var tmp = new Uint8ClampedArray(buf.length);
@@ -651,23 +687,73 @@
         lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
         nrm = lum / 255;
 
-        if (wantMask) {
-          m = nrm > haloT ? (nrm - haloT) / (1 - haloT) : 0;
-          m = m * m * 255;
-          mxh = x >> 1; myh = y >> 1;
-          if (mxh < hw && myh < hh) {
-            mi = (myh * hw + mxh) * 4;
-            mask[mi] = m; mask[mi + 1] = m; mask[mi + 2] = m; mask[mi + 3] = 255;
-          }
-        }
-
         data[i] = r < 0 ? 0 : r > 255 ? 255 : r;
         data[i + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
         data[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
       }
     }
 
+    /* P2：镜头柔化 + 横向色差。先处理颜色，再从处理后的颜色生成亮部遮罩，
+       这样 bloom/halation 看到的是经过镜头后的高光边缘。 */
+    var wantLens = !!opt.lens;
+    var lens = lensModel(film);
+    var lensScale = Math.min(w, h) / 1080;
+    var lensSoft = lens.softness * lensScale;
+    var lensCA = lens.ca * lensScale;
+    if (lensSoft < 0.01 && lensCA < 0.01) wantLens = false;
+    if (wantLens) {
+      var lensSrc = new Uint8ClampedArray(data);
+      for (y = 0, i = 0; y < h; y++) {
+        var ldy = (y - cy) / normR;
+        for (x = 0; x < w; x++, i += 4) {
+          var ldx = (x - cx) / normR;
+          var lrr = ldx * ldx + ldy * ldy;
+          if (lrr < 0.000001) continue;
+          var lr = Math.sqrt(lrr);
+          var caX = (ldx / lr) * lensCA * lrr;
+          var caY = (ldy / lr) * lensCA * lrr;
+          var sxi = Math.round(lensSoft * lrr);
+          var rx = x + caX, ry = y + caY;
+          var bx = x - caX, by = y - caY;
+          var rv = bilinearAt(lensSrc, w, h, rx, ry, 0);
+          var gv = bilinearAt(lensSrc, w, h, x, y, 1);
+          var bv = bilinearAt(lensSrc, w, h, bx, by, 2);
+          if (sxi > 0) {
+            /* 4 邻域柔化 + 原值：比 GPU 的 4-tap 稍轻，成本低很多 */
+            rv = (rv + nearestAt(lensSrc, w, h, rx - sxi, ry, 0) +
+              nearestAt(lensSrc, w, h, rx + sxi, ry, 0) +
+              nearestAt(lensSrc, w, h, rx, ry - sxi, 0) +
+              nearestAt(lensSrc, w, h, rx, ry + sxi, 0)) / 5;
+            gv = (gv + nearestAt(lensSrc, w, h, x - sxi, y, 1) +
+              nearestAt(lensSrc, w, h, x + sxi, y, 1) +
+              nearestAt(lensSrc, w, h, x, y - sxi, 1) +
+              nearestAt(lensSrc, w, h, x, y + sxi, 1)) / 5;
+            bv = (bv + nearestAt(lensSrc, w, h, bx - sxi, by, 2) +
+              nearestAt(lensSrc, w, h, bx + sxi, by, 2) +
+              nearestAt(lensSrc, w, h, bx, by - sxi, 2) +
+              nearestAt(lensSrc, w, h, bx, by + sxi, 2)) / 5;
+          }
+          data[i] = rv;
+          data[i + 1] = gv;
+          data[i + 2] = bv;
+        }
+      }
+    }
+
     if (wantMask) {
+      /* 半分辨率遮罩：取每个 2×2 源块的左上角，和 GPU 亮部 pass 的采样一致 */
+      for (y = 0, mi = 0; y < hh; y++) {
+        var sy = y * 2;
+        var srow = sy * w * 4;
+        for (x = 0; x < hw; x++, mi += 4) {
+          var si = srow + (x * 2) * 4;
+          lum = data[si] * 0.2126 + data[si + 1] * 0.7152 + data[si + 2] * 0.0722;
+          nrm = lum / 255;
+          m = nrm > haloT ? (nrm - haloT) / (1 - haloT) : 0;
+          m = m * m * 255;
+          mask[mi] = m; mask[mi + 1] = m; mask[mi + 2] = m; mask[mi + 3] = 255;
+        }
+      }
       boxBlur(mask, hw, hh, haloR, 2);
       if (wantBloom) {
         /* 在紧光晕的基础上再糊一次，得到更宽、更柔的镜头辉光 */
@@ -773,6 +859,8 @@
   global.SPOOLO.FILMS = FILMS;
   global.SPOOLO.COLOR_MODEL = COLOR_MODEL;
   global.SPOOLO.colorModel = colorModel;
+  global.SPOOLO.LENS_MODEL = LENS_MODEL;
+  global.SPOOLO.lensModel = lensModel;
   global.SPOOLO.meters = meters;
   global.SPOOLO.render = render;
   global.SPOOLO.buildLUT = buildLUT;

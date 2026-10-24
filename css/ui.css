@@ -1070,6 +1070,8 @@
   box-shadow: 0 24px 40px -24px oklch(0% 0 0 / 1);
   font-size: 13px;
   opacity: 0;
+  /* 提示只是信息层，不能挡住下面的关闭/快门；只有撤销按钮恢复点击 */
+  pointer-events: none;
   transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
@@ -1081,6 +1083,7 @@
   cursor: pointer;
   padding: 4px 6px;
   white-space: nowrap;
+  pointer-events: auto;
 }
 @media (min-width: 1000px) {
   .toast { bottom: 24px; }
@@ -1092,6 +1095,19 @@
     bottom: auto;
     transform: translate(-50%, -12px);
   }
+}
+
+/* 横屏灯箱：Toast 靠左上，右侧给关闭按钮留出空间；点击仍可穿透 */
+@media (max-width: 999px) and (orientation: landscape) {
+  dialog.lightbox .toast {
+    left: max(12px, env(safe-area-inset-left));
+    right: auto;
+    top: calc(12px + env(safe-area-inset-top));
+    bottom: auto;
+    transform: translate(0, -12px);
+    max-width: calc(100vw - 96px);
+  }
+  dialog.lightbox .toast.show { transform: translate(0, 0); }
 }
 
 /* ---------- 手机横屏控制台：EV 独占一行，不再和快门挤在同一列 ---------- */

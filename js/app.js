@@ -1151,7 +1151,7 @@
 
       openProcessing(film, function () {
         develop(best.canvas, best.W, best.H, film, {
-          ev: capture.ev + rescueEv, halation: true, bloom: true, grain: true, vignette: true, leak: true,
+          ev: capture.ev + rescueEv, lens: true, halation: true, bloom: true, grain: true, vignette: true, leak: true,
           seed: seed, dateStamp: capture.date, flash: flashAmt
         });
         return toBlob(best.canvas, 0.92).then(function (blob) {
