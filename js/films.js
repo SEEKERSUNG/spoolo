@@ -309,6 +309,31 @@
     }
   ];
 
+  /* --- P1 色彩模型 -------------------------------------------------------
+     3×3 串扰矩阵：行和为 1，保证中性灰不被染色；用很小的正负交叉项
+     模拟染料层之间的互相吸收，让颜色不是“三个独立通道”那么简单。
+     随色相变化的饱和度：用两个余弦谐波做平滑的色相权重，暖黄/肤色
+     略抬，青绿/蓝略收。两者都可通过乳剂对象覆盖：
+       matrix: [9 个数字，行优先]
+       hueSat: 强度倍率，0 关闭
+     黑白乳剂强制关闭，避免给灰阶引入无意义的颜色。 */
+  var COLOR_MODEL = {
+    matrix: [
+      1.000, 0.0225, -0.0225,
+      -0.015, 1.000, 0.015,
+      0.010, -0.010, 1.000
+    ],
+    hue: { a1: 0.035, p1: 0.60, a2: 0.014, p2: 2.40 }
+  };
+
+  function colorModel(film) {
+    if (film.bw) return { matrix: null, hueSat: 0 };
+    return {
+      matrix: film.matrix && film.matrix.length === 9 ? film.matrix : COLOR_MODEL.matrix,
+      hueSat: film.hueSat != null ? film.hueSat : 1
+    };
+  }
+
   /* --- 显示用指标（1-5 格）--------------------------------------------- */
   function meters(f) {
     var contrast = f.bw ? f.contrast * 0.98
@@ -425,9 +450,33 @@
     for (i = 3; i < buf.length; i += 4) buf[i] = 255;
   }
 
+  /* 颗粒的亮度权重预先查表：中间调最强，高光收敛 */
+  var GRAIN_TONE = new Float32Array(256);
+  var GRAIN_HL = new Float32Array(256);
+  (function () {
+    for (var i = 0; i < 256; i++) {
+      var l = i / 255;
+      GRAIN_TONE[i] = 0.62 + 0.62 * Math.sin(Math.PI * l);
+      GRAIN_HL[i] = 1 - 0.35 * smoothstep(0.72, 1, l);
+    }
+  })();
+
+  /* 低频颗粒团块：双线性 value noise，比 block 噪声更像胶片结块 */
+  function valueNoise(x, y, seed) {
+    var x0 = Math.floor(x), y0 = Math.floor(y);
+    var fx = x - x0, fy = y - y0;
+    var a = hash(x0, y0, seed);
+    var b = hash(x0 + 1, y0, seed);
+    var c = hash(x0, y0 + 1, seed);
+    var d = hash(x0 + 1, y0 + 1, seed);
+    var top = a + (b - a) * fx;
+    var bot = c + (d - c) * fx;
+    return top + (bot - top) * fy;
+  }
+
   /* --- 主渲染 -----------------------------------------------------------
      data: RGBA Uint8ClampedArray（原地修改）
-     opt: { ev, halation, grain, vignette, leak, seed }                     */
+     opt: { ev, halation, bloom, grain, vignette, leak, seed, flash }       */
   function render(data, w, h, film, opt) {
     opt = opt || {};
     var ev = opt.ev || 0;
@@ -442,31 +491,71 @@
     var ht0 = ht[0] * 255, ht1 = ht[1] * 255, ht2 = ht[2] * 255;
 
     var wantHalo = !!opt.halation && !!film.halation;
+    /* 全局 bloom 不依赖 film.halation：黑白和细粒卷也需要一点光学扩散 */
+    var wantBloom = !!opt.bloom;
+    var wantMask = wantHalo || wantBloom;
     var wantGrain = !!opt.grain && film.grain.amount > 0;
     var wantVig = !!opt.vignette && film.vignette > 0;
     var wantLeak = !!opt.leak && film.leak > 0;
     var wantFlash = opt.flash ? opt.flash : 0;
 
-    var hw = 0, hh = 0, mask = null, haloR = 0, haloAmt = 0, haloCol = null, haloT = 0;
-    if (wantHalo) {
+    var bloomAmt = wantBloom ? (film.bloom && film.bloom.amount != null ? film.bloom.amount : (bw ? 0.10 : 0.12)) : 0;
+    var bloomCol = film.bloom && film.bloom.color ? film.bloom.color : (bw ? [1, 1, 1] : [1, 0.96, 0.90]);
+
+    var hw = 0, hh = 0, mask = null, maskBloom = null, haloR = 0, haloAmt = 0, haloCol = null, haloT = 0;
+    if (wantMask) {
       hw = Math.max(2, w >> 1); hh = Math.max(2, h >> 1);
       mask = new Uint8ClampedArray(hw * hh * 4);
-      haloR = Math.max(1, Math.round(film.halation.radius / 2));
-      haloAmt = film.halation.amount;
-      haloCol = film.halation.color;
-      haloT = film.halation.threshold;
+      haloR = wantHalo ? Math.max(1, Math.round(film.halation.radius / 2)) : 4;
+      haloAmt = wantHalo ? film.halation.amount : 0;
+      haloCol = wantHalo ? film.halation.color : null;
+      haloT = wantHalo ? film.halation.threshold : 0.72;
     }
 
     var seed = opt.seed == null ? 7 : opt.seed;
-    var gAmt = film.grain.amount * (opt.grainScale || 1) * 255;
+    /* 细粒只承担质地的“沙感”，主体起伏交给低频团块；总量再压一档，
+       否则 1px 白噪声在灰场里会像电视雪花，而不是胶片颗粒 */
+    var gAmt = film.grain.amount * (opt.grainScale || 1) * 255 * 0.70;
     var gShadow = film.grain.shadow;
     var gSize = film.grain.size || 1;
+    /* 细粒保持 1px，另叠一层 2–5px 的团块；高 ISO 团块更大更明显 */
+    var gCoarseScale = film.grain.coarseScale || (film.iso >= 1600 ? 5 : film.iso >= 800 ? 4 : film.iso >= 400 ? 3 : 2);
+    var gCoarseAmt = film.grain.coarse != null ? film.grain.coarse
+      : (film.iso >= 800 ? 0.55 : film.iso >= 400 ? 0.50 : 0.38);
+    var seedC = (seed * 13 + 29) | 0;
     var vig = film.vignette;
     var leak = film.leak;
     var cx = w / 2, cy = h / 2;
     var normR = Math.sqrt(cx * cx + cy * cy);
 
+    /* P1 色彩模型：串扰矩阵 + 色相相关饱和度 */
+    var model = colorModel(film);
+    var cm = model.matrix;
+    var cm0 = 0, cm1 = 0, cm2 = 0, cm3 = 0, cm4 = 0, cm5 = 0, cm6 = 0, cm7 = 0, cm8 = 0;
+    if (cm) {
+      cm0 = cm[0]; cm1 = cm[1]; cm2 = cm[2];
+      cm3 = cm[3]; cm4 = cm[4]; cm5 = cm[5];
+      cm6 = cm[6]; cm7 = cm[7]; cm8 = cm[8];
+    }
+    var hueSat = model.hueSat;
+    var hueA1 = COLOR_MODEL.hue.a1, hueP1 = COLOR_MODEL.hue.p1;
+    var hueA2 = COLOR_MODEL.hue.a2, hueP2 = COLOR_MODEL.hue.p2;
+    var PI3 = Math.PI / 3;
+    /* CPU 用 512 级色相权重表，避免每个像素算两次 cos；GPU 仍用解析式，
+       两者在 0.7° 的量化误差内一致 */
+    var HUE_N = 512, HUE_SCALE = HUE_N / (Math.PI * 2);
+    var hueTable = null;
+    if (hueSat) {
+      hueTable = new Float32Array(HUE_N);
+      for (var hi = 0; hi < HUE_N; hi++) {
+        var ha = hi / HUE_SCALE;
+        var hueWt = 1 + hueSat * (hueA1 * Math.cos(ha - hueP1) + hueA2 * Math.cos(2 * ha - hueP2));
+        hueTable[hi] = hueWt < 0.5 ? 0.5 : hueWt > 1.5 ? 1.5 : hueWt;
+      }
+    }
+
     var i, x, y, r, g, b, l, mx, mn, s, lum, nrm, shw, hiw, m, mi, mxh, myh;
+    var matR, matG, matB, hueCh, hueAng, hueW, hueIdx;
 
     /* 漏光的横向系数只算一次，避免每个像素都做 pow */
     var leakCol = null;
@@ -489,6 +578,18 @@
           r = lut[data[i]];
           g = lut[data[i + 1] + 256];
           b = lut[data[i + 2] + 512];
+
+          /* 3×3 串扰：先记下原值，再一次性混合，避免行间互相污染 */
+          if (cm) {
+            matR = r; matG = g; matB = b;
+            r = matR * cm0 + matG * cm1 + matB * cm2;
+            g = matR * cm3 + matG * cm4 + matB * cm5;
+            b = matR * cm6 + matG * cm7 + matB * cm8;
+            if (r < 0) r = 0; else if (r > 255) r = 255;
+            if (g < 0) g = 0; else if (g > 255) g = 255;
+            if (b < 0) b = 0; else if (b > 255) b = 255;
+          }
+
           lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
           mx = r > g ? r : g; if (b > mx) mx = b;
           mn = r < g ? r : g; if (b < mn) mn = b;
@@ -496,6 +597,27 @@
           r = lum + (r - lum) * s;
           g = lum + (g - lum) * s;
           b = lum + (b - lum) * s;
+
+          /* 色相相关饱和度：只缩放围绕亮度的色度，不改变亮度和色相 */
+          if (hueSat) {
+            mx = r > g ? r : g; if (b > mx) mx = b;
+            mn = r < g ? r : g; if (b < mn) mn = b;
+            hueCh = mx - mn;
+            if (hueCh > 0.0255) {
+              if (mx === r) hueAng = (g - b) / hueCh;
+              else if (mx === g) hueAng = (b - r) / hueCh + 2;
+              else hueAng = (r - g) / hueCh + 4;
+              if (hueAng < 0) hueAng += 6;
+              hueAng *= PI3;
+              hueIdx = (hueAng * HUE_SCALE) | 0;
+              if (hueIdx >= HUE_N) hueIdx = HUE_N - 1;
+              hueW = hueTable[hueIdx];
+              lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
+              r = lum + (r - lum) * hueW;
+              g = lum + (g - lum) * hueW;
+              b = lum + (b - lum) * hueW;
+            }
+          }
         }
         lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
         nrm = lum / 255;
@@ -504,7 +626,32 @@
         g += st1 * shw + ht1 * hiw;
         b += st2 * shw + ht2 * hiw;
 
-        if (wantHalo) {
+        /* 高光去饱和：胶片的高光不会像数码那样一直保持鲜艳 */
+        if (!bw) {
+          lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
+          nrm = lum / 255;
+          var hl = smoothstep(0.62, 1, nrm);
+          var ds = hl * (film.highlightDesat != null ? film.highlightDesat : 0.28);
+          if (ds > 0) {
+            r += (lum - r) * ds;
+            g += (lum - g) * ds;
+            b += (lum - b) * ds;
+          }
+          lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
+          nrm = lum / 255;
+        }
+        /* 高光轻微向白抬一点，黑白和彩色一致 */
+        lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
+        nrm = lum / 255;
+        var hl2 = smoothstep(0.62, 1, nrm);
+        var wl = hl2 * 0.03;
+        r += (255 - r) * wl;
+        g += (255 - g) * wl;
+        b += (255 - b) * wl;
+        lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
+        nrm = lum / 255;
+
+        if (wantMask) {
           m = nrm > haloT ? (nrm - haloT) / (1 - haloT) : 0;
           m = m * m * 255;
           mxh = x >> 1; myh = y >> 1;
@@ -520,12 +667,19 @@
       }
     }
 
-    if (wantHalo) boxBlur(mask, hw, hh, haloR, 2);
+    if (wantMask) {
+      boxBlur(mask, hw, hh, haloR, 2);
+      if (wantBloom) {
+        /* 在紧光晕的基础上再糊一次，得到更宽、更柔的镜头辉光 */
+        maskBloom = new Uint8ClampedArray(mask);
+        boxBlur(maskBloom, hw, hh, Math.max(3, Math.round(Math.min(hw, hh) / 60)), 2);
+      }
+    }
 
     /* 取景预览只跑第一遍色彩；没有空间效果时不必再扫一遍全画面 */
-    if (!wantHalo && !wantGrain && !wantVig && !wantLeak && !wantFlash) return data;
+    if (!wantHalo && !wantBloom && !wantGrain && !wantVig && !wantLeak && !wantFlash) return data;
 
-    /* 第二遍：光晕 + 颗粒 + 暗角 + 漏光 */
+    /* 第二遍：光晕 / bloom + 颗粒 + 暗角 + 漏光 */
     var seedA = seed, seedB = (seed * 7 + 13) | 0;
     var bodyTop = h * 0.34, bodyBot = h * 0.94;
     for (y = 0, i = 0; y < h; y++) {
@@ -539,23 +693,50 @@
       for (x = 0; x < w; x++, i += 4) {
         r = data[i]; g = data[i + 1]; b = data[i + 2];
 
-        if (wantHalo) {
+        if (wantMask) {
           mi = (((y >> 1) < hh ? (y >> 1) : hh - 1) * hw + ((x >> 1) < hw ? (x >> 1) : hw - 1)) * 4;
-          m = (mask[mi] / 255) * haloAmt;
-          r = 255 - (255 - r) * (1 - m * haloCol[0]);
-          g = 255 - (255 - g) * (1 - m * haloCol[1]);
-          b = 255 - (255 - b) * (1 - m * haloCol[2]);
+          var maskV = mask[mi] / 255;
+          if (wantHalo) {
+            m = maskV * haloAmt;
+            r = 255 - (255 - r) * (1 - m * haloCol[0]);
+            g = 255 - (255 - g) * (1 - m * haloCol[1]);
+            b = 255 - (255 - b) * (1 - m * haloCol[2]);
+          }
+          if (wantBloom) {
+            var mb = (maskBloom[mi] / 255) * bloomAmt;
+            r = 255 - (255 - r) * (1 - mb * bloomCol[0]);
+            g = 255 - (255 - g) * (1 - mb * bloomCol[1]);
+            b = 255 - (255 - b) * (1 - mb * bloomCol[2]);
+          }
         }
 
         if (wantGrain) {
           lum = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 255;
-          var ga = gAmt * (1 + gShadow * (1 - lum));
+          var li = (lum * 255) | 0;
+          if (li < 0) li = 0; else if (li > 255) li = 255;
+          var ga = gAmt * GRAIN_TONE[li] * (1 + gShadow * (1 - lum)) * GRAIN_HL[li];
+          /* 软限幅：高感卷可以更粗，但不能把画面打成噪点墙 */
+          if (ga > 32) ga = 32 + (ga - 32) * 0.35;
           var gx = gSize > 1 ? (x / gSize) | 0 : x;
           var n1 = hash(gx, gy, seedA);
           var n2 = hash(gx + 53, gy + 97, seedB);
-          r += n1 * ga;
-          g += (n1 * 0.62 + n2 * 0.38) * ga;
-          b += n2 * ga;
+          var nC = valueNoise(gx / gCoarseScale, gy / gCoarseScale, seedC) * gCoarseAmt;
+          /* 细粒降权 + 低频团块，空间上更接近银盐结块 */
+          var nFine = n1 * 0.78;
+          if (bw) {
+            /* 黑白胶片颗粒是单色的，不能给 R/G/B 不同噪声 */
+            var n = nFine + nC;
+            r += n * ga;
+            g += n * ga;
+            b += n * ga;
+          } else {
+            /* 以亮度颗粒为主，只留很弱的通道差；否则放大后全是彩色数码噪点 */
+            var nL = nFine + nC;
+            var nCh = n2 * 0.30;
+            r += (nL + nCh * 0.55) * ga;
+            g += (nL - nCh * 0.10) * ga;
+            b += (nL - nCh * 0.55) * ga;
+          }
         }
 
         var dx, d;
@@ -590,6 +771,8 @@
 
   global.SPOOLO = global.SPOOLO || {};
   global.SPOOLO.FILMS = FILMS;
+  global.SPOOLO.COLOR_MODEL = COLOR_MODEL;
+  global.SPOOLO.colorModel = colorModel;
   global.SPOOLO.meters = meters;
   global.SPOOLO.render = render;
   global.SPOOLO.buildLUT = buildLUT;

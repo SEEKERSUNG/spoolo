@@ -23,7 +23,9 @@
   var COLOR_FS = PRECISION + [
     'varying vec2 vUv;',
     'uniform sampler2D uSrc, uLut;',
-    'uniform float uMono, uSat, uVib;',
+    'uniform float uMono, uSat, uVib, uHiDesat;',
+    'uniform float uHueSat, uHueA1, uHueP1, uHueA2, uHueP2;',
+    'uniform vec3 uM0, uM1, uM2;',
     'uniform vec3 uST, uHT;',
     'float lutR(float v){ return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).r; }',
     'float lutG(float v){ return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).g; }',
@@ -36,14 +38,36 @@
     '    col = vec3(lutR(l));',
     '  } else {',
     '    vec3 t = vec3(lutR(c.r), lutG(c.g), lutB(c.b));',
+    '    t = clamp(vec3(dot(t, uM0), dot(t, uM1), dot(t, uM2)), 0.0, 1.0);',
     '    float lum = dot(t, vec3(0.2126, 0.7152, 0.0722));',
     '    float mx = max(max(t.r, t.g), t.b);',
     '    float mn = min(min(t.r, t.g), t.b);',
     '    float s = uSat + uVib * (1.0 - (mx - mn));',
     '    col = vec3(lum) + (t - vec3(lum)) * s;',
+    '    float mx2 = max(max(col.r, col.g), col.b);',
+    '    float mn2 = min(min(col.r, col.g), col.b);',
+    '    float ch = mx2 - mn2;',
+    '    if (uHueSat > 0.0001 && ch > 0.0001) {',
+    '      float h;',
+    '      if (mx2 == col.r) h = (col.g - col.b) / ch;',
+    '      else if (mx2 == col.g) h = (col.b - col.r) / ch + 2.0;',
+    '      else h = (col.r - col.g) / ch + 4.0;',
+    '      if (h < 0.0) h += 6.0;',
+    '      h *= 3.14159265 / 3.0;',
+    '      float w = 1.0 + uHueSat * (uHueA1 * cos(h - uHueP1) + uHueA2 * cos(2.0 * h - uHueP2));',
+    '      w = clamp(w, 0.5, 1.5);',
+    '      float l2 = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+    '      col = vec3(l2) + (col - vec3(l2)) * w;',
+    '    }',
     '  }',
     '  float nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
     '  col += uST * (1.0 - nrm) + uHT * nrm;',
+    '  nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+    '  float hl = smoothstep(0.62, 1.0, nrm);',
+    '  col = mix(vec3(nrm), col, 1.0 - hl * uHiDesat);',
+    '  nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+    '  float hl2 = smoothstep(0.62, 1.0, nrm);',
+    '  col = mix(col, vec3(1.0), hl2 * 0.03);',
     '  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);',
     '}'
   ].join('\n');
@@ -82,27 +106,48 @@
 
   var COMP_FS = PRECISION + [
     'varying vec2 vUv;',
-    'uniform sampler2D uColor, uMask, uNoise;',
+    'uniform sampler2D uColor, uMask, uMaskBloom, uNoise, uNoiseSoft;',
     'uniform vec2 uRes, uNoiseOff;',
-    'uniform float uHalo, uGrain, uGrainShadow, uGrainSize;',
+    'uniform float uHalo, uBloom, uGrain, uGrainShadow, uGrainSize;',
+    'uniform float uGrainMono, uGrainCoarseScale, uGrainCoarseAmt;',
     'uniform float uVig, uLeak, uLeakTop, uLeakBot, uFlash;',
-    'uniform vec3 uHaloColor;',
+    'uniform vec3 uHaloColor, uBloomColor;',
     'void main(){',
     '  vec3 c = texture2D(uColor, vUv).rgb;',
     '  vec2 px = vUv * uRes;',
     '  float yTop = (1.0 - vUv.y) * uRes.y;',
-    '  float m = texture2D(uMask, vUv).r * uHalo;',
+    '  float maskV = texture2D(uMask, vUv).r;',
+    '  float maskBV = texture2D(uMaskBloom, vUv).r;',
+    '  float m = maskV * uHalo;',
     '  c = 1.0 - (1.0 - c) * (1.0 - m * uHaloColor);',
+    '  float mb = maskBV * uBloom;',
+    '  c = 1.0 - (1.0 - c) * (1.0 - mb * uBloomColor);',
     '  float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));',
-    '  float ga = uGrain * (1.0 + uGrainShadow * (1.0 - lum));',
+    '  float toneW = 0.62 + 0.62 * sin(3.14159265 * lum);',
+    '  float hlW = 1.0 - 0.35 * smoothstep(0.72, 1.0, lum);',
+    '  float ga = uGrain * 0.70 * toneW * (1.0 + uGrainShadow * (1.0 - lum)) * hlW;',
+    '  ga = min(ga, 0.125 + max(0.0, ga - 0.125) * 0.35);',
     '  vec2 gp = floor(px / uGrainSize);',
-    '  vec3 nA = texture2D(uNoise, (gp + uNoiseOff) * (1.0 / 512.0)).rgb;',
-    '  vec3 nB = texture2D(uNoise, (gp * 0.61 + uNoiseOff.yx + 17.0) * (1.0 / 512.0)).rgb;',
+    '  /* 512 纹理直接平铺会每 512px 重复同一片颗粒；按纹理块给不同的整数位移，',
+    '     既保持随机分布，又打散平铺周期 */',
+    '  vec2 gt = floor(gp / 512.0);',
+    '  vec2 gj = vec2(137.0, 71.0) * gt + vec2(53.0, 29.0) * gt.yx;',
+    '  vec3 nA = texture2D(uNoise, (gp + uNoiseOff + gj) * (1.0 / 512.0)).rgb;',
     '  float n1 = nA.r * 2.0 - 1.0;',
-    '  float n2 = (nA.b * 0.65 + nB.g * 0.35) * 2.0 - 1.0;',
-    '  c.r += n1 * ga;',
-    '  c.g += (n1 * 0.62 + n2 * 0.38) * ga;',
-    '  c.b += n2 * ga;',
+    '  float n2 = nA.b * 2.0 - 1.0;',
+    '  vec2 cp = px / (uGrainSize * uGrainCoarseScale);',
+    '  vec2 ct = floor(cp / 512.0);',
+    '  vec2 cj = vec2(191.0, 83.0) * ct + vec2(31.0, 109.0) * ct.yx;',
+    '  float nC = texture2D(uNoiseSoft, (cp + uNoiseOff + cj) * (1.0 / 512.0)).g * 2.0 - 1.0;',
+    '  float nL = n1 * 0.78 + nC * uGrainCoarseAmt;',
+    '  float nCh = n2 * 0.30;',
+    '  if (uGrainMono > 0.5) {',
+    '    c += vec3(nL * ga);',
+    '  } else {',
+    '    c.r += (nL + nCh * 0.55) * ga;',
+    '    c.g += (nL - nCh * 0.10) * ga;',
+    '    c.b += (nL - nCh * 0.55) * ga;',
+    '  }',
     '  vec2 d = (px - uRes * 0.5) / length(uRes * 0.5);',
     '  float dv = length(d);',
     '  float vf = 1.0 - uVig * smoothstep(0.45, 1.02, dv);',
@@ -182,7 +227,16 @@
         sat: gl.getUniformLocation(colorP, 'uSat'),
         vib: gl.getUniformLocation(colorP, 'uVib'),
         st: gl.getUniformLocation(colorP, 'uST'),
-        ht: gl.getUniformLocation(colorP, 'uHT')
+        ht: gl.getUniformLocation(colorP, 'uHT'),
+        hiDesat: gl.getUniformLocation(colorP, 'uHiDesat'),
+        m0: gl.getUniformLocation(colorP, 'uM0'),
+        m1: gl.getUniformLocation(colorP, 'uM1'),
+        m2: gl.getUniformLocation(colorP, 'uM2'),
+        hueSat: gl.getUniformLocation(colorP, 'uHueSat'),
+        hueA1: gl.getUniformLocation(colorP, 'uHueA1'),
+        hueP1: gl.getUniformLocation(colorP, 'uHueP1'),
+        hueA2: gl.getUniformLocation(colorP, 'uHueA2'),
+        hueP2: gl.getUniformLocation(colorP, 'uHueP2')
       },
       bright: {
         color: gl.getUniformLocation(brightP, 'uColor'),
@@ -195,14 +249,21 @@
       comp: {
         color: gl.getUniformLocation(compP, 'uColor'),
         mask: gl.getUniformLocation(compP, 'uMask'),
+        maskBloom: gl.getUniformLocation(compP, 'uMaskBloom'),
         noise: gl.getUniformLocation(compP, 'uNoise'),
+        noiseSoft: gl.getUniformLocation(compP, 'uNoiseSoft'),
         res: gl.getUniformLocation(compP, 'uRes'),
         noiseOff: gl.getUniformLocation(compP, 'uNoiseOff'),
         halo: gl.getUniformLocation(compP, 'uHalo'),
+        bloom: gl.getUniformLocation(compP, 'uBloom'),
         haloColor: gl.getUniformLocation(compP, 'uHaloColor'),
+        bloomColor: gl.getUniformLocation(compP, 'uBloomColor'),
         grain: gl.getUniformLocation(compP, 'uGrain'),
         grainShadow: gl.getUniformLocation(compP, 'uGrainShadow'),
         grainSize: gl.getUniformLocation(compP, 'uGrainSize'),
+        grainMono: gl.getUniformLocation(compP, 'uGrainMono'),
+        grainCoarseScale: gl.getUniformLocation(compP, 'uGrainCoarseScale'),
+        grainCoarseAmt: gl.getUniformLocation(compP, 'uGrainCoarseAmt'),
         vig: gl.getUniformLocation(compP, 'uVig'),
         leak: gl.getUniformLocation(compP, 'uLeak'),
         leakTop: gl.getUniformLocation(compP, 'uLeakTop'),
@@ -231,13 +292,16 @@
     gl.useProgram(compP);
     gl.uniform1i(U.comp.color, 0);
     gl.uniform1i(U.comp.mask, 1);
+    gl.uniform1i(U.comp.maskBloom, 4);
     gl.uniform1i(U.comp.noise, 2);
+    gl.uniform1i(U.comp.noiseSoft, 3);
 
     var W = 0, H = 0, HW = 0, HH = 0;
-    var srcTex = null, lutTex = null, noiseTex = null;
+    var srcTex = null, lutTex = null, noiseTex = null, noiseSoftTex = null, noiseData = null;
     var colorT = null, colorFbo = null;
     var maskA = null, maskAFbo = null;
     var maskB = null, maskBFbo = null;
+    var maskC = null, maskCFbo = null;
 
     /* CPU 生成的噪声纹理：比浮点 hash 稳定，不会在大坐标上出现周期网格 */
     function hashNoise(x, y, seed) {
@@ -248,8 +312,8 @@
       return (n >>> 0) / 2147483647.5 - 1;
     }
 
-    function getNoise() {
-      if (noiseTex) return noiseTex;
+    function getNoiseData() {
+      if (noiseData) return noiseData;
       var N = 512;
       var data = new Uint8Array(N * N * 4);
       for (var y = 0; y < N; y++) {
@@ -261,14 +325,30 @@
           data[i + 3] = 255;
         }
       }
-      noiseTex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+      noiseData = data;
+      return data;
+    }
+
+    function makeNoiseTexture(filter) {
+      var t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, N, N, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 512, 0, gl.RGBA, gl.UNSIGNED_BYTE, getNoiseData());
+      return t;
+    }
+
+    function getNoise() {
+      if (!noiseTex) noiseTex = makeNoiseTexture(gl.NEAREST);
       return noiseTex;
+    }
+
+    /* 同一份噪声数据的线性过滤版本：采样在更粗的尺度上，得到柔和的颗粒团块 */
+    function getSoftNoise() {
+      if (!noiseSoftTex) noiseSoftTex = makeNoiseTexture(gl.LINEAR);
+      return noiseSoftTex;
     }
 
     function tex(w, h, filter) {
@@ -291,10 +371,10 @@
     }
 
     function dispose() {
-      [srcTex, lutTex, colorT, maskA, maskB].forEach(function (t) { if (t) gl.deleteTexture(t); });
-      [colorFbo, maskAFbo, maskBFbo].forEach(function (f) { if (f) gl.deleteFramebuffer(f); });
-      srcTex = lutTex = colorT = maskA = maskB = null;
-      colorFbo = maskAFbo = maskBFbo = null;
+      [srcTex, lutTex, colorT, maskA, maskB, maskC].forEach(function (t) { if (t) gl.deleteTexture(t); });
+      [colorFbo, maskAFbo, maskBFbo, maskCFbo].forEach(function (f) { if (f) gl.deleteFramebuffer(f); });
+      srcTex = lutTex = colorT = maskA = maskB = maskC = null;
+      colorFbo = maskAFbo = maskBFbo = maskCFbo = null;
     }
 
     function ensureSize(w, h) {
@@ -314,6 +394,8 @@
       maskAFbo = fbo(maskA);
       maskB = tex(HW, HH, gl.LINEAR);
       maskBFbo = fbo(maskB);
+      maskC = tex(HW, HH, gl.LINEAR);
+      maskCFbo = fbo(maskC);
 
       lutTex = tex(256, 1, gl.NEAREST);
     }
@@ -361,6 +443,18 @@
         gl.uniform1f(U.color.mono, film.bw ? 1 : 0);
         gl.uniform1f(U.color.sat, film.bw ? 0 : film.sat);
         gl.uniform1f(U.color.vib, film.bw ? 0 : film.vibrance);
+        gl.uniform1f(U.color.hiDesat, film.bw ? 0 : (film.highlightDesat != null ? film.highlightDesat : 0.28));
+        var model = SP.colorModel ? SP.colorModel(film) : { matrix: null, hueSat: 0 };
+        var mm = model.matrix || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+        gl.uniform3f(U.color.m0, mm[0], mm[1], mm[2]);
+        gl.uniform3f(U.color.m1, mm[3], mm[4], mm[5]);
+        gl.uniform3f(U.color.m2, mm[6], mm[7], mm[8]);
+        gl.uniform1f(U.color.hueSat, model.hueSat);
+        var hc = (SP.COLOR_MODEL && SP.COLOR_MODEL.hue) || { a1: 0, p1: 0, a2: 0, p2: 0 };
+        gl.uniform1f(U.color.hueA1, hc.a1);
+        gl.uniform1f(U.color.hueP1, hc.p1);
+        gl.uniform1f(U.color.hueA2, hc.a2);
+        gl.uniform1f(U.color.hueP2, hc.p2);
         gl.uniform3f(U.color.st, film.shadowTint[0], film.shadowTint[1], film.shadowTint[2]);
         gl.uniform3f(U.color.ht, film.highTint[0], film.highTint[1], film.highTint[2]);
         gl.activeTexture(gl.TEXTURE0);
@@ -370,16 +464,20 @@
         draw(colorFbo, W, H);
 
         var wantHalo = !!opts.halation && !!film.halation;
-        if (wantHalo) {
-          /* 2. 半分辨率亮部遮罩 */
+        var wantBloom = !!opts.bloom;
+        var wantMask = wantHalo || wantBloom;
+        var bloomAmt = wantBloom ? (film.bloom && film.bloom.amount != null ? film.bloom.amount : (film.bw ? 0.10 : 0.12)) : 0;
+        var bloomCol = film.bloom && film.bloom.color ? film.bloom.color : (film.bw ? [1, 1, 1] : [1, 0.96, 0.90]);
+        if (wantMask) {
+          /* 2. 半分辨率亮部遮罩：halation 和全局 bloom 共用 */
           gl.useProgram(brightP);
-          gl.uniform1f(U.bright.thr, film.halation.threshold);
+          gl.uniform1f(U.bright.thr, wantHalo ? film.halation.threshold : 0.72);
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, colorT);
           draw(maskAFbo, HW, HH);
 
           /* 3. 两轮可分离模糊，近似 CPU 的两遍盒式模糊 */
-          var hr = Math.max(1, Math.round(film.halation.radius / 2));
+          var hr = wantHalo ? Math.max(1, Math.round(film.halation.radius / 2)) : 4;
           var step = hr / 4;
           gl.useProgram(blurP);
           for (var pass = 0; pass < 2; pass++) {
@@ -393,12 +491,36 @@
             gl.uniform2f(U.blur.dir, 0, step / HH);
             draw(maskAFbo, HW, HH);
           }
+
+          /* 全局 bloom 用更大半径再糊一次：从紧贴高光的光晕扩散成柔和的镜头辉光 */
+          if (wantBloom) {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, maskA);
+            gl.uniform2f(U.blur.dir, 0, 0);
+            draw(maskCFbo, HW, HH);
+
+            var br = Math.max(3, Math.round(Math.min(HW, HH) / 60));
+            var bstep = br / 4;
+            for (var bp = 0; bp < 2; bp++) {
+              gl.activeTexture(gl.TEXTURE0);
+              gl.bindTexture(gl.TEXTURE_2D, maskC);
+              gl.uniform2f(U.blur.dir, bstep / HW, 0);
+              draw(maskBFbo, HW, HH);
+
+              gl.activeTexture(gl.TEXTURE0);
+              gl.bindTexture(gl.TEXTURE_2D, maskB);
+              gl.uniform2f(U.blur.dir, 0, bstep / HH);
+              draw(maskCFbo, HW, HH);
+            }
+          }
         }
 
         /* 4. 合成到默认帧缓冲 */
         gl.useProgram(compP);
         gl.uniform2f(U.comp.res, W, H);
         gl.uniform1f(U.comp.halo, wantHalo ? film.halation.amount : 0);
+        gl.uniform1f(U.comp.bloom, bloomAmt);
+        gl.uniform3f(U.comp.bloomColor, bloomCol[0], bloomCol[1], bloomCol[2]);
         if (wantHalo) {
           gl.uniform3f(U.comp.haloColor,
             film.halation.color[0], film.halation.color[1], film.halation.color[2]);
@@ -408,6 +530,11 @@
         gl.uniform1f(U.comp.grain, opts.grain ? film.grain.amount * (opts.grainScale || 1) : 0);
         gl.uniform1f(U.comp.grainShadow, film.grain.shadow || 0);
         gl.uniform1f(U.comp.grainSize, film.grain.size || 1);
+        gl.uniform1f(U.comp.grainMono, film.bw ? 1 : 0);
+        gl.uniform1f(U.comp.grainCoarseScale,
+          film.grain.coarseScale || (film.iso >= 1600 ? 5 : film.iso >= 800 ? 4 : film.iso >= 400 ? 3 : 2));
+        gl.uniform1f(U.comp.grainCoarseAmt,
+          film.grain.coarse != null ? film.grain.coarse : (film.iso >= 800 ? 0.55 : film.iso >= 400 ? 0.50 : 0.38));
         var noiseSeed = (opts.seed == null ? 7 : opts.seed) | 0;
         gl.uniform2f(U.comp.noiseOff,
           ((noiseSeed % 512) + 512) % 512,
@@ -421,9 +548,13 @@
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, colorT);
         gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, maskA);
+        gl.bindTexture(gl.TEXTURE_2D, maskA || colorT);
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, getNoise());
+        gl.activeTexture(gl.TEXTURE3);
+        gl.bindTexture(gl.TEXTURE_2D, getSoftNoise());
+        gl.activeTexture(gl.TEXTURE4);
+        gl.bindTexture(gl.TEXTURE_2D, maskC);
         draw(null, W, H);
 
         return true;

@@ -181,8 +181,9 @@
     'uniform sampler2D uVideo;',
     'uniform sampler2D uLut;',
     'uniform vec4 uCrop;',
-    'uniform float uMirror, uMono, uSat, uVib;',
-    'uniform vec3 uST, uHT;',
+    'uniform float uMirror, uMono, uSat, uVib, uHiDesat;',
+    'uniform float uHueSat, uHueA1, uHueP1, uHueA2, uHueP2;',
+    'uniform vec3 uM0, uM1, uM2, uST, uHT;',
     'float lutR(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).r; }',
     'float lutG(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).g; }',
     'float lutB(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).b; }',
@@ -197,14 +198,36 @@
     '    col = vec3(lutR(l));',
     '  } else {',
     '    vec3 t = vec3(lutR(c.r), lutG(c.g), lutB(c.b));',
+    '    t = clamp(vec3(dot(t, uM0), dot(t, uM1), dot(t, uM2)), 0.0, 1.0);',
     '    float lum = dot(t, vec3(0.2126, 0.7152, 0.0722));',
     '    float mx = max(max(t.r, t.g), t.b);',
     '    float mn = min(min(t.r, t.g), t.b);',
     '    float s = uSat + uVib * (1.0 - (mx - mn));',
     '    col = vec3(lum) + (t - vec3(lum)) * s;',
+    '    float mx2 = max(max(col.r, col.g), col.b);',
+    '    float mn2 = min(min(col.r, col.g), col.b);',
+    '    float ch = mx2 - mn2;',
+    '    if (uHueSat > 0.0001 && ch > 0.0001) {',
+    '      float h;',
+    '      if (mx2 == col.r) h = (col.g - col.b) / ch;',
+    '      else if (mx2 == col.g) h = (col.b - col.r) / ch + 2.0;',
+    '      else h = (col.r - col.g) / ch + 4.0;',
+    '      if (h < 0.0) h += 6.0;',
+    '      h *= 3.14159265 / 3.0;',
+    '      float w = 1.0 + uHueSat * (uHueA1 * cos(h - uHueP1) + uHueA2 * cos(2.0 * h - uHueP2));',
+    '      w = clamp(w, 0.5, 1.5);',
+    '      float l2 = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+    '      col = vec3(l2) + (col - vec3(l2)) * w;',
+    '    }',
     '  }',
     '  float nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
     '  col += uST * (1.0 - nrm) + uHT * nrm;',
+    '  nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+    '  float hl = smoothstep(0.62, 1.0, nrm);',
+    '  col = mix(vec3(nrm), col, 1.0 - hl * uHiDesat);',
+    '  nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
+    '  float hl2 = smoothstep(0.62, 1.0, nrm);',
+    '  col = mix(col, vec3(1.0), hl2 * 0.03);',
     '  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);',
     '}'
   ].join('\n');
@@ -276,6 +299,15 @@
         mono: g.getUniformLocation(p, 'uMono'),
         sat: g.getUniformLocation(p, 'uSat'),
         vib: g.getUniformLocation(p, 'uVib'),
+        hiDesat: g.getUniformLocation(p, 'uHiDesat'),
+        m0: g.getUniformLocation(p, 'uM0'),
+        m1: g.getUniformLocation(p, 'uM1'),
+        m2: g.getUniformLocation(p, 'uM2'),
+        hueSat: g.getUniformLocation(p, 'uHueSat'),
+        hueA1: g.getUniformLocation(p, 'uHueA1'),
+        hueP1: g.getUniformLocation(p, 'uHueP1'),
+        hueA2: g.getUniformLocation(p, 'uHueA2'),
+        hueP2: g.getUniformLocation(p, 'uHueP2'),
         st: g.getUniformLocation(p, 'uST'),
         ht: g.getUniformLocation(p, 'uHT')
       };
@@ -335,6 +367,7 @@
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, glLutTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.uniform1f(glU.hiDesat, f.bw ? 0 : (f.highlightDesat != null ? f.highlightDesat : 0.28));
   }
 
   function layoutPreview() {
@@ -421,13 +454,23 @@
   function drawPreviewGL(src, size) {
     var crop = coverRect(size.w, size.h, pw / ph);
     var f = currentFilm();
+    gl.useProgram(glProg);
     var key = f.code + '|' + (state.ev / 3).toFixed(2);
     if (key !== lutKey) {
       uploadLut();
       lutKey = key;
     }
-
-    gl.useProgram(glProg);
+    var model = S.colorModel ? S.colorModel(f) : { matrix: null, hueSat: 0 };
+    var mm = model.matrix || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    gl.uniform3f(glU.m0, mm[0], mm[1], mm[2]);
+    gl.uniform3f(glU.m1, mm[3], mm[4], mm[5]);
+    gl.uniform3f(glU.m2, mm[6], mm[7], mm[8]);
+    gl.uniform1f(glU.hueSat, model.hueSat);
+    var hc = (S.COLOR_MODEL && S.COLOR_MODEL.hue) || { a1: 0, p1: 0, a2: 0, p2: 0 };
+    gl.uniform1f(glU.hueA1, hc.a1);
+    gl.uniform1f(glU.hueP1, hc.p1);
+    gl.uniform1f(glU.hueA2, hc.a2);
+    gl.uniform1f(glU.hueP2, hc.p2);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, glVideoTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -1108,7 +1151,7 @@
 
       openProcessing(film, function () {
         develop(best.canvas, best.W, best.H, film, {
-          ev: capture.ev + rescueEv, halation: true, grain: true, vignette: true, leak: true,
+          ev: capture.ev + rescueEv, halation: true, bloom: true, grain: true, vignette: true, leak: true,
           seed: seed, dateStamp: capture.date, flash: flashAmt
         });
         return toBlob(best.canvas, 0.92).then(function (blob) {
