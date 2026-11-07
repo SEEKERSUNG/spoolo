@@ -1,10 +1,11 @@
 # 第三方来源与许可
 
-SPOOLO 整体以 **GNU GPL v3 或更高版本（GPL-3.0-or-later）** 发布，见根目录
-[LICENSE](LICENSE)。
+SPOOLO 的**代码**以 **GNU GPL v3 或更高版本（GPL-3.0-or-later）** 发布，
+见根目录 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
 
 其中「光谱胶片模拟」移植自 **spektrafilm**。该移植包含两部分不同许可的
-材料，必须同时保留下面的署名与许可说明。
+材料，必须同时保留下面的署名与许可说明。`js/spektra-data.js` 中的 profile
+数据不属于 GPL 授权范围，而是单独按 CC BY-SA 4.0 授权。
 
 ## spektrafilm（算法与代码）
 
@@ -16,8 +17,8 @@ SPOOLO 整体以 **GNU GPL v3 或更高版本（GPL-3.0-or-later）** 发布，�
     输出色域映射与 3D LUT 烘焙）
   - `tools/build-spektra-data.py`（数据构建脚本，算法部分同样是衍生作品）
 
-本移植只保留上游的「负片 / 反转片 → 相纸 → 扫描」色彩链，并为了浏览器
-运行做了以下修改（Modified by the SPOOLO project / SEEKERSUNG, 2026）：
+本移植只保留上游的「胶片 → 负片相纸扩印 / 反转片直接扫描」色彩链，并为了
+浏览器运行做了以下修改（Modified by the SPOOLO project / SEEKERSUNG, 2026）：
 
 - 用 JavaScript 重写为无依赖、无构建的浏览器模块；
 - 光谱上采样使用按胶片预计算的 49×49 `tc` LUT，而不是上游运行时的
@@ -47,10 +48,11 @@ DIR coupler、相纸感光曲线、染料密度、中性滤色片等。
   CC BY-SA 4.0 提供；任何再分发或修改必须保留上述署名、来源链接、
   CC BY-SA 4.0 许可说明，并注明修改。
 
-上游的 profile 数据许可是 CC BY-SA 4.0；SPOOLO 整体以 GPL-3.0-or-later
-发布是兼容的（CC BY-SA 4.0 与 GPLv3 的兼容性声明由 Creative Commons
-提供）。如果你只取用 `js/spektra-data.js` 中的数据，请按 CC BY-SA 4.0
-履行署名与相同方式共享义务。
+上游的 profile 数据许可是 CC BY-SA 4.0；SPOOLO 的代码以 GPL-3.0-or-later
+发布，两者可以一起分发，但数据部分仍单独受 CC BY-SA 4.0 约束，不因放入
+本仓库而转为 GPL。CC BY-SA 4.0 → GPLv3 的兼容性声明由 Creative Commons
+提供；再分发时请同时满足两边的署名、许可链接与相同方式共享义务。如果你
+只取用 `js/spektra-data.js` 中的数据，请按 CC BY-SA 4.0 履行义务。
 
 ## 商标说明
 

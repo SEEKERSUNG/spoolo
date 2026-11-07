@@ -161,8 +161,8 @@
   function ensureSpectralData() {
     if (S.Spektra && S.SPEKTRA_DATA) return Promise.resolve();
     if (state.spectralLoadPromise) return state.spectralLoadPromise;
-    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.20.0')
-      .then(function () { return loadScriptOnce('js/spektra.js?v=1.20.0'); })
+    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.21.0')
+      .then(function () { return loadScriptOnce('js/spektra.js?v=1.21.0'); })
       .then(function () {
         if (!S.Spektra || !S.SPEKTRA_DATA) throw new Error('spectral-data-missing');
         S.Spektra.setData(S.SPEKTRA_DATA);
@@ -1017,8 +1017,9 @@
     el.canCode.textContent = f.code;
     el.canName.textContent = f.name;
     if (f.process) {
-      el.canMeta.textContent = f.process + ' · ' + spectralPaperShort(state.spectralPaperId);
-      el.canMeta.title = f.process + ' · ISO ' + f.iso + ' · ' + spectralPaperName(state.spectralPaperId);
+      el.canMeta.textContent = f.process + ' · ' + (f.positive ? '直接扫描' : spectralPaperShort(state.spectralPaperId));
+      el.canMeta.title = f.process + ' · ISO ' + f.iso + ' · ' +
+        (f.positive ? '反转片直接扫描，不经过相纸' : spectralPaperName(state.spectralPaperId));
     } else {
       el.canMeta.textContent = '光谱数据载入中';
       el.canMeta.title = '';
@@ -1392,7 +1393,7 @@
               spectralFilm: capture.spectralFilm || '',
               spectralPaper: capture.spectralPaper || '',
               spectralFilmName: film.name,
-              spectralPaperName: spectralPaperName(capture.spectralPaper),
+              spectralPaperName: film.positive ? '直接扫描' : spectralPaperName(capture.spectralPaper),
               flash: flashKind ? 1 : 0,
               flashKind: flashKind,
               w: best.W,

@@ -473,7 +473,15 @@
 
     var illu = makePrintIlluminant(p, f);
 
-    /* 中灰曝光归一化：与 Reference 的 _compute_exposure_factor_midgray 一致 */
+    /* 反转片按幻灯片直接扫描，不经过负片相纸；否则相纸会把正像再反一次。
+       扫描矩阵仍借用相纸的 D50 → sRGB 矩阵（目前所有相纸观看光源都是 D50）。 */
+    var directScan = !!f.positive;
+    var scanP = directScan
+      ? { cd: f.cd, bd: f.bd, mOut: p.mOut, viewKey: f.view }
+      : null;
+    var scanScale = 1, scanOffset = 0;
+
+    /* 负片：中灰曝光归一化，与 Reference 的 _compute_exposure_factor_midgray 一致 */
     var midLin = [0.184, 0.184, 0.184];
     var midRaw = [0, 0, 0];
     filmRaw(f, midLin, midRaw);
@@ -488,12 +496,32 @@
     for (c = 0; c < 3; c++) logSum += Math.log(Math.max(midPrint[c], 1e-10));
     var expFactor = 1 / Math.exp(logSum / 3);
 
+    /* 反转片：用显影后的最黑 / 最白密度归一化扫描亮度，避免整张发灰 */
+    if (directScan) {
+      var edgeIn = [0, 0, 0], edgeRaw = [0, 0, 0], edgeLog = [0, 0, 0];
+      var edgeDens = [0, 0, 0], edgeXyz = [0, 0, 0];
+      var edgeY = [0, 0];
+      for (var e = 0; e < 2; e++) {
+        var ev = e ? 1 : 0;
+        edgeIn[0] = edgeIn[1] = edgeIn[2] = ev;
+        filmRaw(f, edgeIn, edgeRaw);
+        for (c = 0; c < 3; c++) edgeLog[c] = Math.log(Math.max(edgeRaw[c], 1e-10)) * PLANCK_LOG10E;
+        developFilm(f, edgeLog, edgeDens);
+        scanDensity(scanP, edgeDens, edgeXyz);
+        edgeY[e] = 0.2126 * edgeXyz[0] + 0.7152 * edgeXyz[1] + 0.0722 * edgeXyz[2];
+      }
+      if (edgeY[1] > edgeY[0] + 1e-8) {
+        scanScale = (0.98 - 0.01) / (edgeY[1] - edgeY[0]);
+        scanOffset = 0.01 - scanScale * edgeY[0];
+      }
+    }
+
     var n = size * size * size;
     var data = new Float32Array(n * 3);
     var lin = [0, 0, 0], raw = [0, 0, 0], logRaw = [0, 0, 0];
     var dens = [0, 0, 0], pRaw = [0, 0, 0], pLog = [0, 0, 0], pDens = [0, 0, 0];
     var xyz = [0, 0, 0], rgbLin = [0, 0, 0];
-    var idx = 0;
+    var idx = 0, scanY = 0, scanGain = 1;
 
     for (var bi = 0; bi < size; bi++) {
       var bv = bi / (size - 1);
@@ -508,10 +536,19 @@
           filmRaw(f, lin, raw);
           for (c = 0; c < 3; c++) logRaw[c] = Math.log(Math.max(raw[c], 1e-10)) * PLANCK_LOG10E;
           developFilm(f, logRaw, dens);
-          printExposure(f, p, dens, illu, expFactor, pRaw);
-          for (c = 0; c < 3; c++) pLog[c] = Math.log(Math.max(pRaw[c], 1e-10)) * PLANCK_LOG10E;
-          developPrint(p, pLog, pDens);
-          scanDensity(p, pDens, xyz);
+          if (directScan) {
+            scanDensity(scanP, dens, xyz);
+            scanY = 0.2126 * xyz[0] + 0.7152 * xyz[1] + 0.0722 * xyz[2];
+            scanGain = scanY > 1e-10
+              ? Math.max(0, Math.min(1, scanScale * scanY + scanOffset)) / scanY
+              : 0;
+            xyz[0] *= scanGain; xyz[1] *= scanGain; xyz[2] *= scanGain;
+          } else {
+            printExposure(f, p, dens, illu, expFactor, pRaw);
+            for (c = 0; c < 3; c++) pLog[c] = Math.log(Math.max(pRaw[c], 1e-10)) * PLANCK_LOG10E;
+            developPrint(p, pLog, pDens);
+            scanDensity(p, pDens, xyz);
+          }
           compressRgbOkLch(xyz);
           for (c = 0; c < 3; c++) rgbLin[c] = linearToSrgb(clamp01(xyz[c]));
           data[idx++] = rgbLin[0];
@@ -637,6 +674,7 @@
       en: f.en || '',
       process: f.process || (f.positive ? 'E-6' : 'C-41'),
       iso: iso,
+      positive: !!f.positive,
       tone: f.tone || '#c9a888',
       grain: {
         amount: grainAmt,

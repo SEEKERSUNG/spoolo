@@ -11,8 +11,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet"></noscript>
-<link rel="stylesheet" href="css/base.css?v=1.20.0">
-<link rel="stylesheet" href="css/ui.css?v=1.20.0">
+<link rel="stylesheet" href="css/base.css?v=1.21.0">
+<link rel="stylesheet" href="css/ui.css?v=1.21.0">
 </head>
 <body>
 <div class="room" aria-hidden="true"></div>
@@ -36,7 +36,7 @@
           <span class="maker-name">SPOOLO</span>
           <span class="maker-sub">135 FORMAT · MODEL 35S</span>
           <span class="maker-meta">
-            <span>v1.20.0</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
+            <span>v1.21.0</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
           </span>
         </div>
 
@@ -217,7 +217,7 @@
     </div>
 
     <div class="panel" id="panelFilms" role="tabpanel" aria-labelledby="tabFilms" tabindex="0">
-      <p class="panel-note">二十种 spektrafilm 光谱乳剂。换卷即刻生效，色彩全部来自胶片曝光 → 相纸扩印 → 扫描链。</p>
+      <p class="panel-note">二十种 spektrafilm 光谱乳剂。换卷即刻生效；负片走相纸扩印，反转片直接扫描胶片。</p>
 
       <section class="spectra" aria-labelledby="spectraTitle">
         <div class="spectra-head">
@@ -227,7 +227,10 @@
         <p class="spectra-credit">
           色彩链与数据来自
           <a href="https://github.com/andreavolpato/spektrafilm" target="_blank" rel="noopener">spektrafilm</a>
-          · GPL-3.0-or-later / CC BY-SA 4.0
+          / Andrea Volpato /
+          <a href="LICENSE">GPL-3.0-or-later</a> /
+          <a href="third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt">CC BY-SA 4.0</a> /
+          SPOOLO 修改（2026）
         </p>
       </section>
 
@@ -235,12 +238,14 @@
     </div>
 
     <div class="panel" id="panelPaper" role="tabpanel" aria-labelledby="tabPaper" tabindex="0" hidden>
-      <p class="panel-note">八种彩色相纸。相纸决定扩印后的色彩与密度响应；换纸会按当前胶卷重新烘焙 LUT。</p>
+      <p class="panel-note">八种彩色相纸。相纸决定负片扩印后的色彩与密度响应；反转片直接扫描胶片，不经过相纸。</p>
       <div class="paper-credit">
         <b>数据与算法来源</b>
         <a href="https://github.com/andreavolpato/spektrafilm" target="_blank" rel="noopener">spektrafilm</a>
-        · 相纸 profile 为 CC BY-SA 4.0，移植代码为 GPL-3.0-or-later；
-        本移植只取胶片 / 相纸光谱链，不含裁切、自定义调色与 Raw 解码。
+        / Andrea Volpato /
+        数据 <a href="third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt">CC BY-SA 4.0</a> /
+        代码 <a href="LICENSE">GPL-3.0-or-later</a> /
+        SPOOLO 修改（2026）
       </div>
       <ul class="film-list" id="paperList"></ul>
     </div>
@@ -264,7 +269,7 @@
     </div>
 
     <p class="lab-foot">
-      <b>SPOOLO</b> v1.20.0<span>·</span>135 胶片相机
+      <b>SPOOLO</b> v1.21.0<span>·</span>135 胶片相机
       <a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
     </p>
   </aside>
@@ -316,10 +321,10 @@
 
 <input type="file" id="fileInput" class="file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" tabindex="-1" aria-label="导入底片">
 
-<script src="js/films.js?v=1.20.0"></script>
-<script src="js/store.js?v=1.20.0"></script>
-<script src="js/gpu-develop.js?v=1.20.0"></script>
-<script src="js/zip.js?v=1.20.0"></script>
-<script src="js/app.js?v=1.20.0"></script>
+<script src="js/films.js?v=1.21.0"></script>
+<script src="js/store.js?v=1.21.0"></script>
+<script src="js/gpu-develop.js?v=1.21.0"></script>
+<script src="js/zip.js?v=1.21.0"></script>
+<script src="js/app.js?v=1.21.0"></script>
 </body>
 </html>
