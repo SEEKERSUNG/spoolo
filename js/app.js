@@ -5,7 +5,6 @@
   'use strict';
 
   var S = window.SPOOLO;
-  var FILMS = S.FILMS;
   var Store = S.Store;
   var gpuDevelop = null;
   try { gpuDevelop = S.GLDevelop ? S.GLDevelop() : null; } catch (e) { gpuDevelop = null; }
@@ -24,13 +23,13 @@
 
   /* ---------- 状态 ---------- */
   var state = {
-    filmIndex: 0,
     ev: 0,                    /* 以 1/3 档为单位 */
     facing: 'environment',
     stream: null,
     live: false,
     mirror: false,
     source: 'none',           /* camera | file | none */
+    sourceUrl: null,          /* 导入图当前使用的 blob URL，换图时释放 */
     sourceLock: false,        /* 用户已选好导入底片，晚到的镜头请求不再顶掉它 */
     cameraLost: false,        /* 轨道被系统掐断，回到相机时自动重连一次 */
     busy: false,
@@ -42,11 +41,20 @@
     urls: [],
     current: null,            /* 灯箱中的照片 */
     managing: false,
-    selected: Object.create(null)
+    selected: Object.create(null),
+    /* 光谱模拟：数据启动后懒加载，LUT 只保留当前胶片×相纸一份 */
+    spectralLut: null,
+    spectralFilmId: '',
+    spectralPaperId: '',
+    spectralFilmObj: null,
+    spectralLoading: false,
+    spectralLoadPromise: null,
+    spectralBakeTimer: 0,
+    spectralPendingFilm: '',
+    spectralPendingPaper: ''
   };
 
   var prefs = loadPrefs();
-  state.filmIndex = filmIndexOf(prefs.film);
   state.ev = prefs.ev;
 
   function clampInt(v, min, max, dflt) {
@@ -57,7 +65,6 @@
 
   /* 本地存的偏好可能是旧版本/手工改过的脏值，读进来先收敛到可用范围 */
   function normalizePrefs(p) {
-    if (typeof p.film !== 'string' || !p.film) p.film = 'PT-400';
     p.ev = clampInt(p.ev, -6, 6, 0);
     p.roll = clampInt(p.roll, 1, 9999, 1);
 
@@ -75,11 +82,17 @@
     p.grid = !!p.grid;
     p.date = !!p.date;
     p.sound = !!p.sound;
+    p.grain = p.grain === undefined ? true : !!p.grain;
+    if (typeof p.spectralFilm !== 'string' || !p.spectralFilm) p.spectralFilm = 'kodak_portra_400';
+    if (typeof p.spectralPaper !== 'string' || !p.spectralPaper) p.spectralPaper = 'kodak_portra_endura';
     return p;
   }
 
   function loadPrefs() {
-    var d = { film: 'PT-400', ev: 0, grid: true, date: false, sound: true, timer: 0, flash: 0, roll: 1, frame: 1 };
+    var d = {
+      ev: 0, grid: true, date: false, sound: true, grain: true, timer: 0, flash: 0, roll: 1, frame: 1,
+      spectralFilm: 'kodak_portra_400', spectralPaper: 'kodak_portra_endura'
+    };
     try {
       var raw = localStorage.getItem(PREFS_KEY);
       if (raw) {
@@ -92,11 +105,193 @@
   function savePrefs() {
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (e) { /* 忽略 */ }
   }
-  function filmIndexOf(code) {
-    for (var i = 0; i < FILMS.length; i++) if (FILMS[i].code === code) return i;
+  /* 载入期间用的占位乳剂：只保证 UI 字段完整，不参与冲印 */
+  var PENDING_FILM = {
+    code: '···', name: '正在载入', en: '', process: '', iso: 0, tone: '#c9a888',
+    grain: { amount: 0, size: 1, shadow: 0, coarse: 0, coarseScale: 2 },
+    halation: null, vignette: 0, leak: 0, lens: false
+  };
+  function currentFilm() {
+    return state.spectralFilmObj || PENDING_FILM;
+  }
+
+  /* ---------- 光谱模拟（spektrafilm 移植层的懒加载与 UI） ---------- */
+  function activeSpectralLut() {
+    return state.spectralLut || null;
+  }
+  function activeSpectral() {
+    return !!(state.spectralLut && state.spectralFilmObj);
+  }
+  function spectralFilmIndex(id) {
+    if (!S.Spektra) return 0;
+    var list = S.Spektra.films();
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return i;
     return 0;
   }
-  function currentFilm() { return FILMS[state.filmIndex]; }
+  function spectralPaperName(id) {
+    if (!S.Spektra) return '';
+    var list = S.Spektra.papers();
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i].name;
+    return '';
+  }
+  function spectralPaperShort(id) {
+    return PAPER_CODES[id] || spectralPaperName(id) || '—';
+  }
+  function spectralFilmLabel(id) {
+    if (!S.Spektra) return id;
+    var list = S.Spektra.films();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i].code + ' · ' + list[i].name;
+    }
+    return id;
+  }
+  function setSpectralStatus(text) {
+    if (el.spectraStatus) el.spectraStatus.textContent = text;
+  }
+  function loadScriptOnce(src) {
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = function () { resolve(); };
+      s.onerror = function () { reject(new Error('script-load-failed')); };
+      document.head.appendChild(s);
+    });
+  }
+  function ensureSpectralData() {
+    if (S.Spektra && S.SPEKTRA_DATA) return Promise.resolve();
+    if (state.spectralLoadPromise) return state.spectralLoadPromise;
+    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.20.0')
+      .then(function () { return loadScriptOnce('js/spektra.js?v=1.20.0'); })
+      .then(function () {
+        if (!S.Spektra || !S.SPEKTRA_DATA) throw new Error('spectral-data-missing');
+        S.Spektra.setData(S.SPEKTRA_DATA);
+      })
+      .catch(function (err) {
+        state.spectralLoadPromise = null;
+        throw err;
+      });
+    return state.spectralLoadPromise;
+  }
+  var PAPER_CODES = {
+    kodak_portra_endura: 'ENDURA',
+    kodak_endura_premier: 'PREMIER',
+    kodak_supra_endura: 'SUPRA',
+    kodak_ektacolor_edge: 'EDGE',
+    kodak_ultra_endura: 'ULTRA',
+    fujifilm_crystal_archive_typeii: 'CRYSTAL',
+    kodak_2383: '2383',
+    kodak_2393: '2393'
+  };
+  function renderPaperList() {
+    if (!el.paperList) return;
+    if (!S.Spektra) {
+      el.paperList.innerHTML = '<li class="panel-note">正在载入相纸…</li>';
+      return;
+    }
+    var list = S.Spektra.papers();
+    var activeId = state.spectralPendingPaper || state.spectralPaperId;
+    var html = '';
+    list.forEach(function (p, i) {
+      var on = p.id === activeId;
+      var code = PAPER_CODES[p.id] || 'PAPER';
+      html +=
+        '<li class="film-card' + (on ? ' is-active' : '') + '" data-index="' + i + '">' +
+        '<button class="film-load" type="button" aria-pressed="' + on + '">' +
+        '<span class="fc-swatch" style="--tone:#d8cbb6"></span>' +
+        '<span class="fc-head"><span class="fc-code">' + code + '</span><span class="fc-badge">使用中</span></span>' +
+        '<span class="fc-name">' + p.name + '</span>' +
+        '<span class="fc-en">' + (p.kind || '彩色相纸') + ' · ' + (p.type === 'positive' ? '正像' : '负像') + ' · D50 观察光</span>' +
+        '<span class="fc-note">换纸会重新烘焙当前胶卷的 LUT。</span>' +
+        '</button></li>';
+    });
+    el.paperList.innerHTML = html;
+  }
+  function setPaper(index) {
+    if (!S.Spektra) return;
+    var list = S.Spektra.papers();
+    var n = list.length;
+    if (!n) return;
+    var i = ((index % n) + n) % n;
+    var id = list[i].id;
+    if (id === (state.spectralPendingPaper || state.spectralPaperId) && activeSpectral()) return;
+    prefs.spectralPaper = id;
+    savePrefs();
+    queueSpectralBake(state.spectralPendingFilm || state.spectralFilmId, id);
+    renderPaperList();
+  }
+  function commitSpectralBake(filmId, paperId) {
+    if (!S.Spektra) return;
+    var prevFilm = state.spectralFilmId;
+    try {
+      state.spectralLut = S.Spektra.bake(filmId, paperId, 33);
+      state.spectralFilmId = filmId;
+      state.spectralPaperId = paperId;
+      state.spectralPendingFilm = filmId;
+      state.spectralPendingPaper = paperId;
+      state.spectralFilmObj = S.Spektra.effectsFor(filmId);
+      prefs.spectralFilm = filmId;
+      prefs.spectralPaper = paperId;
+      savePrefs();
+      setSpectralStatus('已就绪 · 33³ LUT · ' + S.Spektra.films().length + ' 卷 / ' +
+        S.Spektra.papers().length + ' 种相纸');
+      paintCurrentFilm();
+      renderFilmList();
+      renderPaperList();
+      refreshPreview();
+      if (prevFilm && prevFilm !== filmId) {
+        el.canister.classList.remove('swapping');
+        void el.canister.offsetWidth;
+        el.canister.classList.add('swapping');
+        if (state.live || state.source !== 'none') Sound.play('tick');
+      }
+    } catch (e) {
+      state.spectralLut = null;
+      state.spectralFilmObj = null;
+      setSpectralStatus('LUT 计算失败 · 请换一组胶卷 / 相纸重试');
+      paintCurrentFilm();
+      renderFilmList();
+      renderPaperList();
+      refreshPreview();
+      toast('光谱 LUT 计算失败，请换一组胶卷 / 相纸重试');
+    }
+  }
+  function queueSpectralBake(filmId, paperId) {
+    if (!S.Spektra) return;
+    state.spectralPendingFilm = filmId;
+    state.spectralPendingPaper = paperId;
+    setSpectralStatus('正在计算 ' + spectralFilmLabel(filmId) + ' × ' + spectralPaperName(paperId) + ' …');
+    clearTimeout(state.spectralBakeTimer);
+    state.spectralBakeTimer = setTimeout(function () {
+      commitSpectralBake(state.spectralPendingFilm, state.spectralPendingPaper);
+    }, 80);
+  }
+  function loadSpectral() {
+    if (state.spectralLoading || activeSpectral()) return;
+    state.spectralLoading = true;
+    setSpectralStatus('正在载入光谱数据…');
+    ensureSpectralData().then(function () {
+      var films = S.Spektra.films(), papers = S.Spektra.papers();
+      var fid = prefs.spectralFilm, pid = prefs.spectralPaper, i, hasF = false, hasP = false;
+      for (i = 0; i < films.length; i++) if (films[i].id === fid) hasF = true;
+      if (!hasF) fid = films.length ? films[0].id : '';
+      for (i = 0; i < papers.length; i++) if (papers[i].id === pid) hasP = true;
+      if (!hasP) pid = S.Spektra.defaultPaper(fid);
+      state.spectralLoading = false;
+      commitSpectralBake(fid, pid);
+    }).catch(function () {
+      state.spectralLoading = false;
+      setSpectralStatus('光谱数据加载失败 · 请刷新页面重试');
+      toast('光谱数据加载失败，请检查网络后刷新');
+    });
+  }
+  function cycleSpectralFilm(step) {
+    if (!S.Spektra) return;
+    var list = S.Spektra.films();
+    if (!list.length) return;
+    var i = spectralFilmIndex(state.spectralPendingFilm || state.spectralFilmId);
+    setFilm(i + step);
+  }
 
   /* ---------- 元素 ---------- */
   var el = {
@@ -144,6 +339,8 @@
     lbCode: $('#lbCode'),
     lbName: $('#lbName'),
     lbMeta: $('#lbMeta'),
+    spectraStatus: $('#spectraStatus'),
+    paperList: $('#paperList'),
     processing: $('#processing'),
     procBar: $('#procBar'),
     procTitle: $('#procTitle'),
@@ -162,7 +359,7 @@
      ====================================================================== */
   var ctx = null;                    /* Canvas2D 兜底 */
   var gl = null, glReady = false;    /* WebGL 预览 */
-  var glProg = null, glBuf = null, glVideoTex = null, glLutTex = null, glU = null;
+  var glProg = null, glBuf = null, glVideoTex = null, glSpecTex = null, glU = null;
   var lutKey = '';
   var pw = 320, ph = 213;
 
@@ -176,59 +373,43 @@
   ].join('\n');
 
   var GL_FS = [
+    '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+    'precision highp float;',
+    '#else',
     'precision mediump float;',
+    '#endif',
     'varying vec2 vUv;',
     'uniform sampler2D uVideo;',
-    'uniform sampler2D uLut;',
+    'uniform sampler2D uSpec;',
     'uniform vec4 uCrop;',
-    'uniform float uMirror, uMono, uSat, uVib, uHiDesat;',
-    'uniform float uHueSat, uHueA1, uHueP1, uHueA2, uHueP2;',
-    'uniform vec3 uM0, uM1, uM2, uST, uHT;',
-    'float lutR(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).r; }',
-    'float lutG(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).g; }',
-    'float lutB(float v) { return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).b; }',
+    'uniform float uMirror, uSpecExp, uSpecSize, uSpecTiles, uSpecRows;',
+    'float s2l(float x) { return x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4); }',
+    'float l2s(float x) { return x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0 / 2.4) - 0.055; }',
+    'vec3 specSlice(float z, vec2 p) {',
+    '  float tx = mod(z, uSpecTiles) * uSpecSize;',
+    '  float ty = floor(z / uSpecTiles) * uSpecSize;',
+    '  return texture2D(uSpec, vec2((tx + 0.5 + p.x) / (uSpecTiles * uSpecSize),',
+    '                               (ty + 0.5 + p.y) / (uSpecRows * uSpecSize))).rgb;',
+    '}',
+    'vec3 specSample(vec3 c) {',
+    '  vec3 lin = vec3(s2l(c.r), s2l(c.g), s2l(c.b)) * uSpecExp;',
+    '  lin = clamp(lin, 0.0, 1.0);',
+    '  vec3 t = vec3(l2s(lin.r), l2s(lin.g), l2s(lin.b));',
+    '  float S = uSpecSize;',
+    '  vec2 p = t.rg * (S - 1.0);',
+    '  float z = t.b * (S - 1.0);',
+    '  float z0 = floor(z);',
+    '  if (z0 > S - 2.0) z0 = S - 2.0;',
+    '  vec3 a = specSlice(z0, p);',
+    '  vec3 b = specSlice(z0 + 1.0, p);',
+    '  return mix(a, b, z - z0);',
+    '}',
     'void main() {',
     '  vec2 uv = vUv;',
     '  if (uMirror > 0.5) uv.x = 1.0 - uv.x;',
     '  vec2 suv = vec2(mix(uCrop.x, uCrop.z, uv.x), mix(uCrop.y, uCrop.w, uv.y));',
     '  vec3 c = texture2D(uVideo, suv).rgb;',
-    '  vec3 col;',
-    '  if (uMono > 0.5) {',
-    '    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));',
-    '    col = vec3(lutR(l));',
-    '  } else {',
-    '    vec3 t = vec3(lutR(c.r), lutG(c.g), lutB(c.b));',
-    '    t = clamp(vec3(dot(t, uM0), dot(t, uM1), dot(t, uM2)), 0.0, 1.0);',
-    '    float lum = dot(t, vec3(0.2126, 0.7152, 0.0722));',
-    '    float mx = max(max(t.r, t.g), t.b);',
-    '    float mn = min(min(t.r, t.g), t.b);',
-    '    float s = uSat + uVib * (1.0 - (mx - mn));',
-    '    col = vec3(lum) + (t - vec3(lum)) * s;',
-    '    float mx2 = max(max(col.r, col.g), col.b);',
-    '    float mn2 = min(min(col.r, col.g), col.b);',
-    '    float ch = mx2 - mn2;',
-    '    if (uHueSat > 0.0001 && ch > 0.0001) {',
-    '      float h;',
-    '      if (mx2 == col.r) h = (col.g - col.b) / ch;',
-    '      else if (mx2 == col.g) h = (col.b - col.r) / ch + 2.0;',
-    '      else h = (col.r - col.g) / ch + 4.0;',
-    '      if (h < 0.0) h += 6.0;',
-    '      h *= 3.14159265 / 3.0;',
-    '      float w = 1.0 + uHueSat * (uHueA1 * cos(h - uHueP1) + uHueA2 * cos(2.0 * h - uHueP2));',
-    '      w = clamp(w, 0.5, 1.5);',
-    '      float l2 = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-    '      col = vec3(l2) + (col - vec3(l2)) * w;',
-    '    }',
-    '  }',
-    '  float nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-    '  col += uST * (1.0 - nrm) + uHT * nrm;',
-    '  nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-    '  float hl = smoothstep(0.62, 1.0, nrm);',
-    '  col = mix(vec3(nrm), col, 1.0 - hl * uHiDesat);',
-    '  nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-    '  float hl2 = smoothstep(0.62, 1.0, nrm);',
-    '  col = mix(col, vec3(1.0), hl2 * 0.03);',
-    '  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);',
+    '  gl_FragColor = vec4(clamp(specSample(c), 0.0, 1.0), 1.0);',
     '}'
   ].join('\n');
 
@@ -284,35 +465,27 @@
       g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
       g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL, true);
 
-      glLutTex = g.createTexture();
-      g.bindTexture(g.TEXTURE_2D, glLutTex);
+      /* 光谱 3D LUT 的 2D 图集；线性过滤负责每层内的双线性，两层之间手动插值 */
+      glSpecTex = g.createTexture();
+      g.bindTexture(g.TEXTURE_2D, glSpecTex);
       g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
       g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
-      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.NEAREST);
-      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.NEAREST);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.LINEAR);
+      g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
+      g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, 1, 1, 0, g.RGBA, g.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
 
       glU = {
         video: g.getUniformLocation(p, 'uVideo'),
-        lut: g.getUniformLocation(p, 'uLut'),
+        spec: g.getUniformLocation(p, 'uSpec'),
+        specExp: g.getUniformLocation(p, 'uSpecExp'),
+        specSize: g.getUniformLocation(p, 'uSpecSize'),
+        specTiles: g.getUniformLocation(p, 'uSpecTiles'),
+        specRows: g.getUniformLocation(p, 'uSpecRows'),
         crop: g.getUniformLocation(p, 'uCrop'),
-        mirror: g.getUniformLocation(p, 'uMirror'),
-        mono: g.getUniformLocation(p, 'uMono'),
-        sat: g.getUniformLocation(p, 'uSat'),
-        vib: g.getUniformLocation(p, 'uVib'),
-        hiDesat: g.getUniformLocation(p, 'uHiDesat'),
-        m0: g.getUniformLocation(p, 'uM0'),
-        m1: g.getUniformLocation(p, 'uM1'),
-        m2: g.getUniformLocation(p, 'uM2'),
-        hueSat: g.getUniformLocation(p, 'uHueSat'),
-        hueA1: g.getUniformLocation(p, 'uHueA1'),
-        hueP1: g.getUniformLocation(p, 'uHueP1'),
-        hueA2: g.getUniformLocation(p, 'uHueA2'),
-        hueP2: g.getUniformLocation(p, 'uHueP2'),
-        st: g.getUniformLocation(p, 'uST'),
-        ht: g.getUniformLocation(p, 'uHT')
+        mirror: g.getUniformLocation(p, 'uMirror')
       };
       g.uniform1i(glU.video, 0);
-      g.uniform1i(glU.lut, 1);
+      g.uniform1i(glU.spec, 2);
 
       gl = g;
       glProg = p;
@@ -348,26 +521,17 @@
   }
 
   function uploadLut() {
-    var f = currentFilm();
-    var L = S.buildLUT(f, state.ev / 3);
-    var data = new Uint8Array(1024);
-    for (var i = 0; i < 256; i++) {
-      if (L.mono) {
-        var v = L.mono[i];
-        data[i * 4] = v;
-        data[i * 4 + 1] = v;
-        data[i * 4 + 2] = v;
-      } else {
-        data[i * 4] = L.lut[i];
-        data[i * 4 + 1] = L.lut[i + 256];
-        data[i * 4 + 2] = L.lut[i + 512];
-      }
-      data[i * 4 + 3] = 255;
-    }
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, glLutTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
-    gl.uniform1f(glU.hiDesat, f.bw ? 0 : (f.highlightDesat != null ? f.highlightDesat : 0.28));
+    var spec = activeSpectralLut();
+    if (!spec) return;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, glSpecTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, spec.atlasW, spec.atlasH, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, spec.atlas);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.uniform1f(glU.specSize, spec.size);
+    gl.uniform1f(glU.specTiles, spec.tiles);
+    gl.uniform1f(glU.specRows, spec.rows);
   }
 
   function layoutPreview() {
@@ -452,25 +616,15 @@
   }
 
   function drawPreviewGL(src, size) {
+    var spec = activeSpectralLut();
+    if (!spec) return;
     var crop = coverRect(size.w, size.h, pw / ph);
-    var f = currentFilm();
     gl.useProgram(glProg);
-    var key = f.code + '|' + (state.ev / 3).toFixed(2);
-    if (key !== lutKey) {
+    /* 光谱 LUT 不把 EV 烘进去（shader 在线性光上缩放），所以 key 不含 EV */
+    if (spec.key !== lutKey) {
       uploadLut();
-      lutKey = key;
+      lutKey = spec.key;
     }
-    var model = S.colorModel ? S.colorModel(f) : { matrix: null, hueSat: 0 };
-    var mm = model.matrix || [1, 0, 0, 0, 1, 0, 0, 0, 1];
-    gl.uniform3f(glU.m0, mm[0], mm[1], mm[2]);
-    gl.uniform3f(glU.m1, mm[3], mm[4], mm[5]);
-    gl.uniform3f(glU.m2, mm[6], mm[7], mm[8]);
-    gl.uniform1f(glU.hueSat, model.hueSat);
-    var hc = (S.COLOR_MODEL && S.COLOR_MODEL.hue) || { a1: 0, p1: 0, a2: 0, p2: 0 };
-    gl.uniform1f(glU.hueA1, hc.a1);
-    gl.uniform1f(glU.hueP1, hc.p1);
-    gl.uniform1f(glU.hueA2, hc.a2);
-    gl.uniform1f(glU.hueP2, hc.p2);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, glVideoTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
@@ -479,8 +633,8 @@
     } catch (e) {
       return;
     }
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, glLutTex);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, glSpecTex);
 
     gl.uniform4f(glU.crop,
       crop.x / size.w,
@@ -488,11 +642,7 @@
       (crop.x + crop.w) / size.w,
       1 - crop.y / size.h);
     gl.uniform1f(glU.mirror, state.mirror ? 1 : 0);
-    gl.uniform1f(glU.mono, f.bw ? 1 : 0);
-    gl.uniform1f(glU.sat, f.bw ? 0 : f.sat);
-    gl.uniform1f(glU.vib, f.bw ? 0 : f.vibrance);
-    gl.uniform3f(glU.st, f.shadowTint[0], f.shadowTint[1], f.shadowTint[2]);
-    gl.uniform3f(glU.ht, f.highTint[0], f.highTint[1], f.highTint[2]);
+    gl.uniform1f(glU.specExp, Math.pow(2, state.ev / 3));
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
@@ -503,9 +653,12 @@
     ctx.drawImage(src, crop.x, crop.y, crop.w, crop.h, 0, 0, pw, ph);
     ctx.restore();
 
+    var spec = activeSpectralLut();
+    if (!spec) return;
     var d = ctx.getImageData(0, 0, pw, ph);
     S.render(d.data, pw, ph, currentFilm(), {
-      ev: state.ev / 3, halation: false, grain: false, vignette: false, leak: false, seed: 11
+      ev: state.ev / 3, halation: false, grain: false, vignette: false, leak: false, seed: 11,
+      spectralLut: spec
     });
     ctx.putImageData(d, 0, 0);
   }
@@ -595,6 +748,13 @@
       el.video.srcObject = stream;
       el.video.style.display = 'block';
       el.still.hidden = true;
+      /* 切回镜头后释放导入图的 blob URL，避免长期占内存 */
+      el.still.onload = el.still.onerror = null;
+      if (state.sourceUrl) {
+        try { URL.revokeObjectURL(state.sourceUrl); } catch (e) { /* 忽略 */ }
+        state.sourceUrl = null;
+      }
+      el.still.removeAttribute('src');
       setPressed('flip', state.facing === 'user');
       bindTrackEnded(stream);
       hideNotice();
@@ -767,9 +927,32 @@
     if (!activeSource()) showNotice(why, 'empty');
   }
 
+  /* 解码失败时给出可操作的提示，而不是只说“读不出来” */
+  function importHint(file) {
+    var name = (file && file.name || '').toLowerCase();
+    var type = (file && file.type || '').toLowerCase();
+    if (/heic|heif/.test(type) || /\.(heic|heif)$/.test(name)) {
+      return 'HEIC/HEIF 照片在当前浏览器无法解码。请在相册里导出为 JPEG（iPhone 可在分享时选「兼容性最佳」，' +
+        '或设置 → 相机 → 格式 → 兼容性最佳），也可以重试镜头。';
+    }
+    if (/tiff?/.test(type) || /\.(tif|tiff)$/.test(name)) {
+      return '浏览器不支持 TIFF。请先导出为 JPEG 或 PNG，也可以重试镜头。';
+    }
+    if (/(raw|dng|cr2|cr3|nef|arw|raf|orf|rw2)/.test(type) || /\.(dng|cr2|cr3|nef|arw|raf|orf|rw2)$/.test(name)) {
+      return '浏览器不支持相机 RAW。请先在相机或修图软件里导出 JPEG，也可以重试镜头。';
+    }
+    if (/jxl/.test(type) || /\.jxl$/.test(name)) {
+      return '当前浏览器不支持 JPEG XL。请导出为 JPEG 或 PNG，也可以重试镜头。';
+    }
+    var mb = file && file.size ? (file.size / 1048576).toFixed(1) + ' MB' : '大小未知';
+    return '底片读取失败（' + (type || '未知格式') + ' · ' + mb + '）。请换一张 JPEG 或 PNG；' +
+      '如果照片在云端，请先下载到本机，也可以重试镜头。';
+  }
+
   /* 把一张图片装进取景窗当底片用（画面始终由画布输出）。
-     一旦导入就锁住图源并摘掉镜头重试，晚到的 getUserMedia 结果会被丢弃 */
-  function loadSource(src) {
+     一旦导入就锁住图源并摘掉镜头重试，晚到的 getUserMedia 结果会被丢弃。
+     优先用 blob URL：大图不必先转成几十 MB 的 base64，手机上更不容易失败。 */
+  function loadSource(src, file) {
     disarmCameraRetry();
     state.sourceLock = true;
     state.cameraLost = false;
@@ -777,6 +960,10 @@
     state.mirror = false;
     el.video.style.display = 'none';
     el.still.hidden = true;
+    if (state.sourceUrl && state.sourceUrl !== src) {
+      try { URL.revokeObjectURL(state.sourceUrl); } catch (e) { /* 忽略 */ }
+    }
+    state.sourceUrl = src.indexOf('blob:') === 0 ? src : null;
     el.still.onload = function () {
       /* 用户自己已经切回镜头时，不要用图片顶掉镜头画面 */
       if (state.source === 'camera') return;
@@ -786,10 +973,14 @@
       layoutPreview();
     };
     el.still.onerror = function () {
+      if (state.sourceUrl === src) {
+        try { URL.revokeObjectURL(src); } catch (e) { /* 忽略 */ }
+        state.sourceUrl = null;
+      }
       state.source = 'none';
       state.sourceLock = false;
-      showNotice('底片读取失败 · 可以换一张图片，或重试镜头', 'empty');
-      toast('这张底片读不出来，请换一张图片');
+      showNotice(importHint(file), 'empty');
+      toast('这张底片读不出来 · 请换 JPEG 或 PNG');
     };
     el.still.src = src;
   }
@@ -810,45 +1001,58 @@
      ====================================================================== */
   function applyFilmVars(f) {
     var st = el.frameBox.style;
-    st.setProperty('--vig', f.vignette.toFixed(2));
+    st.setProperty('--vig', (f.vignette || 0).toFixed(2));
     st.setProperty('--leak', (f.leak || 0).toFixed(2));
   }
 
   /* ======================================================================
      胶卷切换
      ====================================================================== */
-  function setFilm(index, opts) {
-    var n = FILMS.length;
-    var i = ((index % n) + n) % n;
-    var changed = i !== state.filmIndex;
-    state.filmIndex = i;
+  function paintCurrentFilm() {
     var f = currentFilm();
-
-    prefs.film = f.code;
-    savePrefs();
+    var n = S.Spektra ? S.Spektra.films().length : 0;
+    var i = spectralFilmIndex(state.spectralFilmId);
+    if (n < 1) n = 1;
 
     el.canCode.textContent = f.code;
     el.canName.textContent = f.name;
-    el.canMeta.textContent = f.process + ' · ISO ' + f.iso;
+    if (f.process) {
+      el.canMeta.textContent = f.process + ' · ' + spectralPaperShort(state.spectralPaperId);
+      el.canMeta.title = f.process + ' · ISO ' + f.iso + ' · ' + spectralPaperName(state.spectralPaperId);
+    } else {
+      el.canMeta.textContent = '光谱数据载入中';
+      el.canMeta.title = '';
+    }
     el.canSwatch.style.setProperty('--tone', f.tone);
     el.roCode.textContent = f.code;
-    el.roIso.textContent = f.iso;
+    el.roIso.textContent = f.iso || '—';
     el.rollKnob.setAttribute('aria-valuenow', i + 1);
+    el.rollKnob.setAttribute('aria-valuemax', n);
     el.rollKnob.setAttribute('aria-valuetext', f.code + ' ' + f.name);
     el.rollKnob.style.setProperty('--rot', (i * 360 / n) + 'deg');
     applyFilmVars(f);
     updateEdgeCode();
-    refreshPreview();
 
-    var m = S.meters(f);
-    el.canBars.innerHTML = meter('反差', m.contrast) + meter('颗粒', m.grain);
+    var gm = f.grain ? Math.max(1, Math.min(5, Math.round((f.grain.amount / 0.13) * 4) + 1)) : 0;
+    var hm = f.halation ? Math.max(1, Math.min(5, Math.round((f.halation.amount / 0.44) * 4) + 1)) : 0;
+    el.canBars.innerHTML = meter('颗粒', gm) + meter('光晕', hm);
+  }
 
-    $$('.film-card', el.filmList).forEach(function (li, idx) {
-      var on = idx === i;
-      li.classList.toggle('is-active', on);
-      var b = $('.film-load', li);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
+  function setFilm(index, opts) {
+    if (!S.Spektra) return;
+    var list = S.Spektra.films();
+    var n = list.length;
+    if (!n) return;
+    var i = ((index % n) + n) % n;
+    var id = list[i].id;
+    var prev = state.spectralPendingFilm || state.spectralFilmId;
+    var changed = id !== prev;
+    if (!changed && activeSpectral()) return;
+
+    prefs.spectralFilm = id;
+    savePrefs();
+    queueSpectralBake(id, state.spectralPendingPaper || state.spectralPaperId || prefs.spectralPaper);
+    renderFilmList();
 
     if (changed && !(opts && opts.silent)) {
       el.canister.classList.remove('swapping');
@@ -863,26 +1067,38 @@
   }
 
   function renderFilmList() {
+    if (!S.Spektra) {
+      el.filmList.innerHTML = '<li class="panel-note">正在载入光谱胶卷…</li>';
+      $('#filmCount').textContent = '0';
+      return;
+    }
+    var list = S.Spektra.films();
+    var activeId = state.spectralPendingFilm || state.spectralFilmId;
     var html = '';
-    FILMS.forEach(function (f, i) {
-      var m = S.meters(f);
+    list.forEach(function (f, i) {
+      var e = S.Spektra.effectsFor(f.id);
+      if (!e) return;
+      var on = f.id === activeId;
+      var gm = Math.max(1, Math.min(5, Math.round((e.grain.amount / 0.13) * 4) + 1));
+      var hm = e.halation ? Math.max(1, Math.min(5, Math.round((e.halation.amount / 0.44) * 4) + 1)) : 1;
+      var typeLabel = f.type === 'positive' ? '反转片' : '负片';
+      var note = typeLabel + ' · ' + (f.iso >= 800 ? '高感乳剂' : f.iso <= 100 ? '细粒乳剂' : '中速乳剂') +
+        ' · 光谱显影 + 相纸扩印';
       html +=
-        '<li class="film-card' + (i === state.filmIndex ? ' is-active' : '') + '" data-index="' + i + '">' +
-        '<button class="film-load" type="button" aria-pressed="' + (i === state.filmIndex) + '">' +
-        '<span class="fc-swatch" style="--tone:' + f.tone + '"></span>' +
-        '<span class="fc-head"><span class="fc-code">' + f.code + '</span><span class="fc-badge">使用中</span></span>' +
-        '<span class="fc-name">' + f.name + '</span>' +
-        '<span class="fc-en">' + f.en + ' · ' + f.process + ' · ISO ' + f.iso + '</span>' +
-        '<span class="fc-bars">' +
-        meter('反差', m.contrast) + meter('饱和', m.sat) + meter('颗粒', m.grain) + meter('光晕', m.halo) +
-        '</span>' +
-        '<span class="fc-note">' + f.note + '</span>' +
+        '<li class="film-card' + (on ? ' is-active' : '') + '" data-index="' + i + '">' +
+        '<button class="film-load" type="button" aria-pressed="' + on + '">' +
+        '<span class="fc-swatch" style="--tone:' + e.tone + '"></span>' +
+        '<span class="fc-head"><span class="fc-code">' + e.code + '</span><span class="fc-badge">使用中</span></span>' +
+        '<span class="fc-name">' + e.name + '</span>' +
+        '<span class="fc-en">' + (e.en ? e.en + ' · ' : '') + e.process + ' · ISO ' + e.iso + '</span>' +
+        '<span class="fc-bars">' + meter('颗粒', gm) + meter('光晕', hm) + '</span>' +
+        '<span class="fc-note">' + note + '</span>' +
         '</button></li>';
     });
     el.filmList.innerHTML = html;
-    $('#filmCount').textContent = FILMS.length;
-    /* 胶卷总数即旋钮量程：以后再加乳剂也不用改 HTML */
-    el.rollKnob.setAttribute('aria-valuemax', FILMS.length);
+    el.filmList.classList.remove('is-dim');
+    $('#filmCount').textContent = list.length;
+    el.rollKnob.setAttribute('aria-valuemax', Math.max(1, list.length));
   }
 
   /* ======================================================================
@@ -892,6 +1108,7 @@
 
   function shoot() {
     if (state.busy) return;
+    if (!activeSpectral()) { toast('光谱数据还在载入，请稍等'); return; }
     if (state.rewinding) { toast('正在回卷，等新卷上好再拍'); return; }
     if (!activeSource()) {
       toast('还没有画面：先允许镜头，或导入一张底片');
@@ -1090,7 +1307,10 @@
       roll: prefs.roll,
       frameNo: prefs.frame,
       date: prefs.date,
-      ev: state.ev / 3
+      ev: state.ev / 3,
+      spectralLut: activeSpectralLut(),
+      spectralFilm: state.spectralFilmId,
+      spectralPaper: state.spectralPaperId
     };
     var flash = flashShouldFire();
 
@@ -1151,8 +1371,8 @@
 
       openProcessing(film, function () {
         develop(best.canvas, best.W, best.H, film, {
-          ev: capture.ev + rescueEv, lens: true, halation: true, bloom: true, grain: true, vignette: true, leak: true,
-          seed: seed, dateStamp: capture.date, flash: flashAmt
+          ev: capture.ev + rescueEv, lens: true, halation: true, bloom: true, grain: prefs.grain, vignette: true, leak: true,
+          seed: seed, dateStamp: capture.date, flash: flashAmt, spectralLut: capture.spectralLut
         });
         return toBlob(best.canvas, 0.92).then(function (blob) {
           if (!blob) throw new Error('jpeg-encode-failed');
@@ -1168,6 +1388,11 @@
               en: film.en,
               iso: film.iso,
               ev: capture.ev,
+              spectral: 1,
+              spectralFilm: capture.spectralFilm || '',
+              spectralPaper: capture.spectralPaper || '',
+              spectralFilmName: film.name,
+              spectralPaperName: spectralPaperName(capture.spectralPaper),
               flash: flashKind ? 1 : 0,
               flashKind: flashKind,
               w: best.W,
@@ -1402,8 +1627,8 @@
 
     /* 先取消 hidden，再更新文案：读屏的 live region 才能捕获到这次内容变化 */
     el.processing.hidden = false;
-    el.procTitle.textContent = (film.process === 'B&W' ? '黑白显影中' : film.process + ' 冲印中');
-    el.procNote.textContent = '按「' + film.code + '」的乳剂曲线还原色彩…';
+    el.procTitle.textContent = film.process + ' 冲印中';
+    el.procNote.textContent = '按「' + film.code + '」的光谱曲线还原色彩…';
     bar.style.width = '0';
     steps.forEach(function (s) { s.className = ''; });
     /* 冲印是全局模态：若暗房抽屉还开着，先收起，避免两套 inert/焦点状态互相覆盖 */
@@ -1896,12 +2121,22 @@
       state.current = row;
       el.lbImage.src = url(row.blob);
       el.lbCode.textContent = row.code;
-      el.lbName.textContent = row.name + (row.en ? ' · ' + row.en : '');
+      var lbEn = row.en ? String(row.en) : '';
+      var lbName = String(row.name || '');
+      if (lbEn) {
+        var nLower = lbName.toLowerCase(), eLower = lbEn.toLowerCase();
+        if (eLower === nLower || nLower.indexOf(eLower) >= 0 || eLower.indexOf(nLower) >= 0) lbEn = '';
+      }
+      el.lbName.textContent = lbName + (lbEn ? ' · ' + lbEn : '');
       var d = new Date(row.ts || Date.now());
       var evText = typeof row.ev === 'number' ? fmtEv(row.ev) : '0.0';
       el.lbMeta.innerHTML =
         '<dt>卷 / 张</dt><dd>ROLL ' + pad2(row.roll || 1) + ' · #' + pad2(row.frameNo || 1) + '</dd>' +
         '<dt>乳剂</dt><dd>' + row.code + ' · ISO ' + row.iso + '</dd>' +
+        (row.spectral
+          ? '<dt>光谱模拟</dt><dd>' + (row.spectralFilmName || row.code) +
+            (row.spectralPaperName ? ' · ' + row.spectralPaperName : '') + '</dd>'
+          : '') +
         '<dt>曝光补偿</dt><dd>' + evText + ' EV</dd>' +
         '<dt>闪光</dt><dd>' + (row.flash ? (row.flashKind === 'torch' ? '已触发（LED）' : '已触发（屏幕）') : '未触发') + '</dd>' +
         '<dt>冲印时间</dt><dd>' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
@@ -2008,17 +2243,37 @@
       toast('请选择一张图片');
       return;
     }
+    if (!file.size) {
+      toast('这张图片是空文件，或还没有从云端下载');
+      return;
+    }
+    /* 优先 blob URL：大图少一次 base64 编解码，也不占几十 MB 的字符串 */
+    var src = null;
+    try { src = URL.createObjectURL(file); } catch (e) { src = null; }
+    if (src) {
+      loadSource(src, file);
+      closeLab();
+      return;
+    }
     var r = new FileReader();
     r.onload = function () {
-      if (!r.result) { toast('这张图片读不出来，请换一张'); return; }
-      loadSource(r.result);
+      if (!r.result) {
+        showNotice(importHint(file), 'empty');
+        toast('这张底片读不出来 · 请换 JPEG 或 PNG');
+        return;
+      }
+      loadSource(r.result, file);
       closeLab();
     };
-    r.onerror = function () { toast('这张图片读不出来，请换一张'); };
+    r.onerror = function () {
+      showNotice(importHint(file), 'empty');
+      toast('这张底片读不出来 · 请换 JPEG 或 PNG');
+    };
     try {
       r.readAsDataURL(file);
     } catch (e) {
-      toast('这张图片读不出来，请换一张');
+      showNotice(importHint(file), 'empty');
+      toast('这张底片读不出来 · 请换 JPEG 或 PNG');
     }
   }
 
@@ -2074,7 +2329,7 @@
     el.scrim.hidden = false;
     requestAnimationFrame(function () { el.scrim.classList.add('show'); });
     document.documentElement.style.overflow = 'hidden';
-    var target = tab === 'album' ? $('#tabAlbum') : $('#tabFilms');
+    var target = tab === 'album' ? $('#tabAlbum') : tab === 'paper' ? $('#tabPaper') : $('#tabFilms');
     if (target) {
       /* 抽屉有滑入过渡，未完成前 focus 会被拒绝；反复尝试直到焦点进入抽屉 */
       var tries = 0;
@@ -2117,14 +2372,21 @@
   }
 
   function setTab(tab) {
-    var films = tab !== 'album';
-    $('#tabFilms').setAttribute('aria-selected', films ? 'true' : 'false');
-    $('#tabAlbum').setAttribute('aria-selected', films ? 'false' : 'true');
-    $('#tabFilms').tabIndex = films ? 0 : -1;
-    $('#tabAlbum').tabIndex = films ? -1 : 0;
-    $('#panelFilms').hidden = !films;
-    $('#panelAlbum').hidden = films;
-    if (!films) scheduleThumbUpgrades();
+    var isFilms = tab === 'films';
+    var isPaper = tab === 'paper';
+    var isAlbum = tab === 'album';
+    var tabs = [
+      ['#tabFilms', isFilms], ['#tabPaper', isPaper], ['#tabAlbum', isAlbum]
+    ];
+    tabs.forEach(function (t) {
+      var node = $(t[0]);
+      node.setAttribute('aria-selected', t[1] ? 'true' : 'false');
+      node.tabIndex = t[1] ? 0 : -1;
+    });
+    $('#panelFilms').hidden = !isFilms;
+    $('#panelPaper').hidden = !isPaper;
+    $('#panelAlbum').hidden = !isAlbum;
+    if (isAlbum) scheduleThumbUpgrades();
   }
 
   /* ======================================================================
@@ -2315,6 +2577,12 @@
         savePrefs();
         b.setAttribute('aria-pressed', prefs.sound ? 'true' : 'false');
         if (prefs.sound) Sound.play('tick');
+      } else if (act === 'grain') {
+        prefs.grain = !prefs.grain;
+        savePrefs();
+        b.setAttribute('aria-pressed', prefs.grain ? 'true' : 'false');
+        b.setAttribute('aria-label', '颗粒：' + (prefs.grain ? '开' : '关'));
+        if (prefs.sound) Sound.play('tick');
       } else if (act === 'import') {
         pickFile();
       }
@@ -2376,11 +2644,26 @@
 
     /* 胶卷旋钮 */
     var drag = null;
-    /* 每档角度必须跟视觉刻度一致：n 卷时每档 360/n 度 */
-    var STEP = Math.PI * 2 / FILMS.length;
+    function knobCount() {
+      return S.Spektra ? S.Spektra.films().length : 0;
+    }
+    function cycleFilm(step) {
+      cycleSpectralFilm(step);
+    }
+    function jumpFilm(index) {
+      if (!S.Spektra) return;
+      var list = S.Spektra.films();
+      if (!list.length) return;
+      var i = ((index % list.length) + list.length) % list.length;
+      setFilm(i, { silent: true });
+    }
     el.rollKnob.addEventListener('pointerdown', function (e) {
       el.rollKnob.setPointerCapture(e.pointerId);
-      drag = { a: angleOf(e), acc: 0, moved: 0, x: e.clientX, y: e.clientY };
+      /* 每档角度必须跟视觉刻度一致：n 卷时每档 360/n 度 */
+      drag = {
+        a: angleOf(e), acc: 0, moved: 0, x: e.clientX, y: e.clientY,
+        step: Math.PI * 2 / Math.max(1, knobCount())
+      };
     });
     el.rollKnob.addEventListener('pointermove', function (e) {
       if (!drag) return;
@@ -2392,10 +2675,10 @@
       drag.acc += d;
       drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
       drag.x = e.clientX; drag.y = e.clientY;
-      var step = Math.trunc(drag.acc / STEP);
+      var step = Math.trunc(drag.acc / drag.step);
       if (step) {
-        drag.acc -= step * STEP;
-        setFilm(state.filmIndex + step);
+        drag.acc -= step * drag.step;
+        cycleFilm(step);
       }
     });
     var endDrag = function () {
@@ -2406,14 +2689,14 @@
     el.rollKnob.addEventListener('pointercancel', function () { drag = null; });
     el.rollKnob.addEventListener('wheel', function (e) {
       e.preventDefault();
-      setFilm(state.filmIndex + (e.deltaY > 0 || e.deltaX > 0 ? 1 : -1));
+      cycleFilm(e.deltaY > 0 || e.deltaX > 0 ? 1 : -1);
     }, { passive: false });
     el.rollKnob.addEventListener('keydown', function (e) {
       var k = e.key;
-      if (k === 'ArrowRight' || k === 'ArrowUp') { e.preventDefault(); setFilm(state.filmIndex + 1); }
-      else if (k === 'ArrowLeft' || k === 'ArrowDown') { e.preventDefault(); setFilm(state.filmIndex - 1); }
-      else if (k === 'Home') { e.preventDefault(); setFilm(0); }
-      else if (k === 'End') { e.preventDefault(); setFilm(FILMS.length - 1); }
+      if (k === 'ArrowRight' || k === 'ArrowUp') { e.preventDefault(); cycleFilm(1); }
+      else if (k === 'ArrowLeft' || k === 'ArrowDown') { e.preventDefault(); cycleFilm(-1); }
+      else if (k === 'Home') { e.preventDefault(); jumpFilm(0); }
+      else if (k === 'End') { e.preventDefault(); jumpFilm(knobCount() - 1); }
       else if (k === 'Enter' || k === ' ') { e.preventDefault(); openLab('films'); }
     });
 
@@ -2433,6 +2716,16 @@
       closeLab();
     });
 
+    /* 相纸选择 */
+    if (el.paperList) {
+      el.paperList.addEventListener('click', function (e) {
+        var b = e.target.closest('.film-load');
+        if (!b) return;
+        var li = b.closest('.film-card');
+        setPaper(Number(li.dataset.index));
+      });
+    }
+
     el.frames.addEventListener('click', function (e) {
       var b = e.target.closest('.shot-open');
       if (!b) return;
@@ -2449,6 +2742,7 @@
        只有真正从 scrim 上按下（pointerdown）才关闭，天然过滤掉这种合成 click。 */
     el.scrim.addEventListener('pointerdown', closeLab);
     $('#tabFilms').addEventListener('click', function () { setTab('films'); });
+    $('#tabPaper').addEventListener('click', function () { setTab('paper'); });
     $('#tabAlbum').addEventListener('click', function () { setTab('album'); });
 
     /* 标签页键盘：左右 / Home / End 切换，焦点跟随（ARIA tabs 模式） */
@@ -2456,10 +2750,13 @@
       var k = e.key;
       if (k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Home' && k !== 'End') return;
       e.preventDefault();
-      var tabs = [$('#tabFilms'), $('#tabAlbum')];
-      var cur = document.activeElement === tabs[1] ? 1 : 0;
-      var next = k === 'Home' ? 0 : k === 'End' ? 1 : cur === 0 ? 1 : 0;
-      setTab(next === 0 ? 'films' : 'album');
+      var tabs = [$('#tabFilms'), $('#tabPaper'), $('#tabAlbum')];
+      var names = ['films', 'paper', 'album'];
+      var cur = tabs.indexOf(document.activeElement);
+      if (cur < 0) cur = 0;
+      var next = k === 'Home' ? 0 : k === 'End' ? tabs.length - 1 :
+        k === 'ArrowRight' ? (cur + 1) % tabs.length : (cur - 1 + tabs.length) % tabs.length;
+      setTab(names[next]);
       tabs[next].focus();
     });
     $('#albumImport').addEventListener('click', pickFile);
@@ -2590,11 +2887,14 @@
      ====================================================================== */
   function init() {
     renderFilmList();
-    setFilm(state.filmIndex, { silent: true });
+    renderPaperList();
     el.frameBox.classList.toggle('show-grid', prefs.grid);
     setPressed('grid', prefs.grid);
     setPressed('date', prefs.date);
     setPressed('sound', prefs.sound);
+    setPressed('grain', prefs.grain);
+    var grainBtn = $('.fn[data-act="grain"]');
+    if (grainBtn) grainBtn.setAttribute('aria-label', '颗粒：' + (prefs.grain ? '开' : '关'));
     setPressed('timer', prefs.timer > 0);
     updateFlashUi();
     el.timerVal.textContent = prefs.timer === 0 ? '关' : prefs.timer + 's';
@@ -2603,6 +2903,8 @@
     setTab('films');
 
     bindControls();
+    /* 光谱模拟是唯一的色彩引擎：等首屏稳定后开始载入，避免阻塞取景 */
+    setTimeout(loadSpectral, 0);
     var storageWarned = false;
     function warnNoStorage() {
       if (storageWarned) return;

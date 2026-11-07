@@ -160,6 +160,9 @@
   font: 400 9px/1.4 var(--font-mono);
   letter-spacing: 0.1em;
   color: oklch(48% 0.018 62);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .canister-bars { display: grid; gap: 3px; width: 46px; }
 .meter { display: grid; gap: 2px; }
@@ -579,6 +582,67 @@
   color: var(--txt-3);
   line-height: 1.6;
 }
+
+/* ---------- 光谱模拟 ---------- */
+.spectra {
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 1px solid oklch(100% 0 0 / 0.10);
+  border-radius: 10px;
+  background: linear-gradient(180deg, oklch(26% 0.010 70), oklch(22% 0.010 70));
+}
+.spectra-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.spectra-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: 600 11.5px/1.25 var(--font-sans);
+  color: var(--txt);
+}
+.spectra-tag {
+  padding: 1px 4px;
+  border: 1px solid oklch(80% 0.16 68 / 0.45);
+  border-radius: 4px;
+  color: var(--amber);
+  font: 500 7.5px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+}
+.spectra-status {
+  min-height: 0;
+  font: 400 9px/1.4 var(--font-mono);
+  color: var(--amber);
+}
+.spectra-credit {
+  margin-top: 5px;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--txt-3);
+}
+.spectra-credit a { color: var(--amber); text-underline-offset: 2px; }
+
+.paper-credit {
+  margin-bottom: 12px;
+  padding: 9px 11px;
+  border: 1px solid oklch(100% 0 0 / 0.10);
+  border-radius: 10px;
+  background: linear-gradient(180deg, oklch(26% 0.010 70), oklch(22% 0.010 70));
+  font-size: 10px;
+  line-height: 1.55;
+  color: var(--txt-3);
+}
+.paper-credit b {
+  display: block;
+  margin-bottom: 2px;
+  font-weight: 600;
+  color: var(--txt-2);
+}
+.paper-credit a { color: var(--amber); text-underline-offset: 2px; }
 
 /* ---------- 胶卷列表 ---------- */
 .film-list {

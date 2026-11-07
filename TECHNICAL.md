@@ -1,8 +1,8 @@
 # SPOOLO 技术文档
 
-> 适用版本：**v1.16.0**
+> 适用版本：**v1.20.0**
 > 面向：准备接手维护、调整色彩、增加乳剂或排查移动端问题的开发者。
-> 建议阅读顺序：`README.md` → 本文第 1～3 节 → `js/films.js` → `js/gpu-develop.js` → `js/app.js` 的冲印部分。
+> 建议阅读顺序：`README.md` → 本文第 1～3 节 → `js/spektra.js` → `js/films.js` → `js/gpu-develop.js` → `js/app.js` 的冲印部分。
 
 SPOOLO 是一台纯静态的网页 135 胶片相机。没有构建步骤、没有运行时依赖，所有效果都在浏览器里现场计算。这个文档的目标是让你在改一行颜色参数之前，知道它会经过哪些像素、哪些着色器、哪些存储路径。
 
@@ -17,11 +17,13 @@ SPOOLO 是一台纯静态的网页 135 胶片相机。没有构建步骤、没�
 | `index.html` | 机身 DOM、胶卷仓、控制台、暗房/影集、灯箱、冲印遮罩、Toast |
 | `css/base.css` | 设计令牌、布局、机身/取景器、响应式断点、取景器 CSS 覆盖层 |
 | `css/ui.css` | 旋钮、功能键、快门、胶卷卡、影集、批量条、抽屉、灯箱、Toast 等组件 |
-| `js/films.js` | 27 种乳剂预设、LUT/曲线、CPU 像素管线、颗粒/光晕/bloom/暗角/漏光/闪光算法 |
-| `js/gpu-develop.js` | 成片 WebGL 管线：色彩 → 镜头柔化/色差 → 亮部遮罩 → 光晕/宽 bloom 两级模糊 → 合成 |
+| `js/films.js` | 光谱 LUT 之后的 CPU 像素管线：颗粒/光晕/bloom/暗角/漏光/闪光算法 |
+| `js/spektra.js` | spektrafilm 移植层：光谱上采样、负片/相纸显影、扫描、输出色域映射、33³ LUT 烘焙与采样 |
+| `js/spektra-data.js` | 光谱胶片/相纸的压缩数据包（base64 Float32/Uint16），启动时懒加载 |
+| `js/gpu-develop.js` | 成片 WebGL 管线：光谱 LUT → 镜头柔化/色差 → 亮部遮罩 → 光晕/宽 bloom 两级模糊 → 合成 |
 | `js/store.js` | IndexedDB 影集存储（失败降级到内存） |
 | `js/zip.js` | 桌面批量保存用的 store-only ZIP（CRC32，不压缩 JPEG） |
-| `js/app.js` | 取景、快门、定时、闪光、冲印调度、影集/灯箱/批量、交互与无障碍 |
+| `js/app.js` | 取景、快门、定时、闪光、冲印调度、胶卷/相纸/影集/灯箱/批量、交互与无障碍 |
 | `TECHNICAL.md` | 本文 |
 | `README.md` | 用户功能、乳剂列表、运行方式、版本记录 |
 
@@ -30,6 +32,11 @@ SPOOLO 是一台纯静态的网页 135 胶片相机。没有构建步骤、没�
 ```
 films.js → store.js → gpu-develop.js → zip.js → app.js
 ```
+
+`spektra-data.js` 与 `spektra.js` 不在首屏 HTML 里：`app.js` 启动后按顺序
+注入这两个脚本（带 `?v=` 版本指纹），随后调用
+`SPOOLO.Spektra.setData(SPOOLO.SPEKTRA_DATA)` 并烘焙当前胶卷 × 相纸。
+光谱链是唯一色彩引擎，不再有合成 LUT 回退。
 
 `films.js` 和 `gpu-develop.js` 只向 `window.SPOOLO` 挂纯函数/工厂，不碰 DOM 结构；`app.js` 是唯一的应用编排层，所有 UI 状态都在它的 IIFE 内部，外部只能通过 DOM 和 `window.SPOOLO` 的公共接口观察。
 
@@ -59,7 +66,7 @@ films.js → store.js → gpu-develop.js → zip.js → app.js
 
 - **纯静态**：`python -m http.server` 或 GitHub Pages 即可；不要引入打包器、框架或后端。
 - **无第三方运行时依赖**：字体是唯一的外部资源，且失败时必须有回退字体。
-- **色彩是显示参考（display-referred）**：所有像素按 sRGB 8-bit 直接计算，不做线性化、ICC 或色域转换；这是为了让 27 种“胶片感”参数可手调、可预期，而不是做色彩管理。改管线前先接受这个前提。
+- **色彩是显示参考（display-referred）**：输入与输出都按显示 sRGB 8-bit 处理；光谱链内部会在采样前做 sRGB ↔ 线性转换，但不再有可手调的“胶片感”曲线参数。所有色彩由 spektrafilm 的胶片 / 相纸数据决定，改管线前先接受这个前提。
 - **移动优先**：主要使用场景是手机竖屏；桌面是第二布局。
 - **iOS Safari 是特殊环境**：摄像头、闪光灯、分享、WebGL 上下文、IndexedDB Blob 都有各自的坑，代码里保留了多条兜底路径。
 
@@ -67,9 +74,9 @@ films.js → store.js → gpu-develop.js → zip.js → app.js
 
 | 想改的东西 | 入口 |
 | --- | --- |
-| 某一卷的颜色 | `FILMS` 里的参数 + `buildLUT()` / `curve()`；预览用的是同一套 LUT |
-| 新增一卷 | 第 4.14 节；不需要改 HTML 里的数量 |
-| 颗粒 | `film.grain` + `films.js` 的 `render()` 第二遍 + `gpu-develop.js` 的 `COMP_FS` / `getNoise()` |
+| 某一卷的颜色 | 上游 profile 数据 + `js/spektra.js` 的光谱链；预览和成片共用同一份 LUT |
+| 新增一卷 | 在 `tools/build-spektra-data.py` 的 `FILM_ORDER` / `FILM_META` 里加 profile，重新生成数据；第 4.17 节 |
+| 颗粒 | `Spektra.effectsFor()` 的 `grain` + `films.js` 的 `render()` 第二遍 + `gpu-develop.js` 的 `COMP_FS` / `getNoise()` |
 | 光晕 | `film.halation` + 半分辨率遮罩/模糊（4.5） |
 | 取景清晰度/帧率 | `app.js` 的 `layoutPreview()` / `loop()` / `GL_FS` |
 | 成片分辨率/构图 | `grabFrame()` |
@@ -85,15 +92,16 @@ films.js → store.js → gpu-develop.js → zip.js → app.js
 
 ### 1.1 三层结构
 
-**第一层：色彩引擎（`films.js`）**
+**第一层：光谱色彩（`spektra.js`）**
 
-- `SPOOLO.FILMS`：27 个乳剂对象。
-- `SPOOLO.buildLUT(film, ev)`：按乳剂和 EV 生成 256 级 LUT。
-- `SPOOLO.render(data, w, h, film, opts)`：CPU 版完整像素管线，原地修改 RGBA `Uint8ClampedArray`。
-- `SPOOLO.meters(film)`：把乳剂参数映射成 UI 上的 1–5 格指标，仅用于展示。
+- `SPOOLO.Spektra.setData()`：解码胶片 / 相纸数据。
+- `SPOOLO.Spektra.bake(filmId, paperId, 33)`：烘焙显示 sRGB → 显示 sRGB 的 33³ LUT。
+- `SPOOLO.Spektra.effectsFor(filmId)`：把胶片元数据映射成颗粒 / 光晕 / 暗角参数，供预览、成片与 UI 复用。
+- `SPOOLO.Spektra.sampleSrgb()`：CPU 三线性采样。
 
-**第二层：GPU 加速（`gpu-develop.js`）**
+**第二层：空间效果（`films.js` / `gpu-develop.js`）**
 
+- `SPOOLO.render(data, w, h, film, opts)`：CPU 版光谱采样 + 颗粒 / 光晕 / 暗角 / 漏光 / 闪光，原地修改 RGBA `Uint8ClampedArray`。
 - `SPOOLO.GLDevelop()`：创建一个离屏 WebGL 上下文，返回 `{ canvas, render(srcCanvas, w, h, film, opts) }`。
 - 只负责成片；预览有另一套更轻的 WebGL 着色器，直接写在 `app.js` 里。
 - `render()` 用布尔值报告成功/失败，不抛异常给上层；`app.js` 在失败时自动回退 CPU。
@@ -109,7 +117,8 @@ films.js → store.js → gpu-develop.js → zip.js → app.js
 
 ```js
 window.SPOOLO = {
-  FILMS, meters, render, buildLUT,   // films.js
+  render, lensModel, LENS_MODEL,      // films.js
+  Spektra, SPEKTRA_DATA,              // spektra.js / spektra-data.js
   GLDevelop,                          // gpu-develop.js
   Store,                              // store.js
   zipFiles                            // zip.js
@@ -119,20 +128,21 @@ window.SPOOLO = {
 `app.js` 不向 `window.SPOOLO` 暴露内部状态。调试时可以在 DevTools 里直接调用：
 
 ```js
-SPOOLO.FILMS.length
-SPOOLO.buildLUT(SPOOLO.FILMS[0], 0)
+SPOOLO.Spektra.films().length
+const lut = SPOOLO.Spektra.bake('kodak_portra_400', 'kodak_portra_endura', 33)
+const film = SPOOLO.Spektra.effectsFor('kodak_portra_400')
 SPOOLO.Store.all()
-SPOOLO.render(pixels, w, h, SPOOLO.FILMS[6], { ev: 0, grain: true, seed: 1 })
+SPOOLO.render(pixels, w, h, film, { ev: 0, spectralLut: lut, grain: true, seed: 1 })
 ```
 
 ### 1.3 启动顺序
 
 `app.js` 的 `init()` 做这些事：
 
-1. `renderFilmList()`：生成 27 张乳剂卡，写入旋钮的 `aria-valuemax`。
-2. `setFilm(prefs.film, { silent: true })`：恢复上次乳剂、写 LUT、更新预览。
-3. 恢复网格/日期/声音/定时/闪光/EV/卷号/张号。
-4. `bindControls()`：所有事件。
+1. `renderFilmList()`：先写入载入占位；光谱数据到达后生成 20 张乳剂卡，写入旋钮的 `aria-valuemax`。
+2. 恢复网格/日期/声音/颗粒/定时/闪光/EV/卷号/张号。
+3. `bindControls()`：所有事件。
+4. `setTimeout(loadSpectral, 0)`：注入光谱脚本、校验上次胶片 / 相纸 id、烘焙当前 LUT。
 5. `refreshAlbum()`：异步读取 IndexedDB。
 6. `layoutPreview()`：量取景框、设画布尺寸。
 7. `requestAnimationFrame(loop)`：30fps 预览循环。
@@ -148,11 +158,12 @@ SPOOLO.render(pixels, w, h, SPOOLO.FILMS[6], { ev: 0, grain: true, seed: 1 })
 
 | 字段 | 含义 |
 | --- | --- |
-| `filmIndex` / `ev` | 当前乳剂下标；EV 以 **1/3 档** 为单位，范围 −6…+6 |
+| `ev` | EV 以 **1/3 档** 为单位，范围 −6…+6 |
 | `facing` | `environment` / `user` |
 | `stream` / `live` | 当前 MediaStream 与视频是否已连接 |
 | `mirror` | 前摄时预览与成片是否镜像 |
 | `source` | `camera` / `file` / `none` |
+| `sourceUrl` | 导入图当前使用的 `blob:` URL；换图或切回镜头时 `revokeObjectURL` |
 | `sourceLock` | 用户已导入底片，晚到的 `getUserMedia` 结果不再覆盖它 |
 | `cameraLost` | 轨道曾被系统掐断，回到相机时自动重连一次 |
 | `busy` | 快门/定时/冲印占用中，阻止重入 |
@@ -163,6 +174,11 @@ SPOOLO.render(pixels, w, h, SPOOLO.FILMS[6], { ev: 0, grain: true, seed: 1 })
 | `shots` | 影集元数据列表（带缩略图，不带原图 Blob） |
 | `current` | 灯箱里当前照片的完整行 |
 | `managing` / `selected` | 批量管理模式与选中集合 |
+| `spectralLut` | 当前光谱胶片 × 相纸烘焙出的 33³ LUT（`data` 为 Float32，`atlas` 为 8-bit 2D 图集） |
+| `spectralFilmId` / `spectralPaperId` | 当前已生效的光谱胶片 / 相纸 id |
+| `spectralFilmObj` | `Spektra.effectsFor()` 返回的「像胶片」对象，供取景、暗角、颗粒、灯箱元数据复用 |
+| `spectralLoading` | 光谱数据是否正在加载 |
+| `spectralBakeTimer` / `spectralPending*` | 换卷/换纸时的防抖烘焙队列 |
 
 ### 2.2 `prefs` 持久化
 
@@ -170,7 +186,6 @@ SPOOLO.render(pixels, w, h, SPOOLO.FILMS[6], { ev: 0, grain: true, seed: 1 })
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `film` | `PT-400` | 乳剂代号 |
 | `ev` | `0` | 1/3 档单位 |
 | `roll` | `1` | 卷号，1–9999 |
 | `frame` | `1` | 当前张号；>36 会被规范到下一卷 |
@@ -179,8 +194,13 @@ SPOOLO.render(pixels, w, h, SPOOLO.FILMS[6], { ev: 0, grain: true, seed: 1 })
 | `grid` | `true` | 构图网格 |
 | `date` | `false` | 日期打印 |
 | `sound` | `true` | 合成快门声 |
+| `grain` | `true` | 冲印时是否叠加颗粒 |
+| `spectralFilm` | `kodak_portra_400` | 光谱胶片 id |
+| `spectralPaper` | `kodak_portra_endura` | 光谱相纸 id |
 
-`normalizePrefs()` 会收敛旧版本脏值。摄像头朝向不持久化，启动固定后摄。
+`normalizePrefs()` 会收敛旧版本脏值。光谱数据尚未加载时，`spectralFilm` /
+`spectralPaper` 只做非空字符串校验；真正加载后会在 `loadSpectral()` 里
+再按可用 id 列表校验。摄像头朝向不持久化，启动固定后摄。
 
 ### 2.3 编号与回卷
 
@@ -219,15 +239,15 @@ SPOOLO.render(pixels, w, h, SPOOLO.FILMS[6], { ev: 0, grain: true, seed: 1 })
 
 - 在 `#preview` canvas 上直接创建 WebGL，`powerPreference: 'low-power'`。
 - 每帧把 `<video>`/`<img>` 上传为纹理，按 `coverRect()` 裁切，前摄镜像。
-- 片元着色器只做：LUT → 饱和度/鲜艳度 → 阴影/高光分离调色。**不做颗粒、光晕、闪光、日期**。
+- 片元着色器只做：光谱 3D LUT 采样（EV 在线性光上缩放）。**不做镜头、颗粒、光晕、暗角、漏光、闪光、日期**。
 - 暗角和漏光由 `frameBox` 上的 CSS 覆盖层近似：`--vig`、`--leak` 由 `applyFilmVars()` 写入；`.fx.vignette` 是径向渐变，`.fx.leak` 是左侧渐变 + `screen` 混合。
 - 画布按设备 DPR 全分辨率（DPR 上限 3，像素上限约 1.4M）；预览固定 30fps（`1000/30` 节流）。
-- LUT 只在乳剂或 EV 改变时重新上传（`lutKey = film.code|ev`）。
+- LUT 只在胶片 / 相纸组合改变时重新上传（`lutKey = spec.key`）；EV 只改 uniform，不重新上传。
 
 **Canvas2D（兜底）**
 
 - WebGL 不可用、着色器编译失败或上下文丢失时，`fallback2DPreview()` 会替换 `#preview` 为 2D canvas。
-- 每帧 `drawImage` 后跑一次 `SPOOLO.render()` 的**第一遍色彩**（关闭光晕/颗粒/暗角/漏光），再 `putImageData`。
+- 每帧 `drawImage` 后跑一次 `SPOOLO.render()` 的**光谱 LUT 第一遍**（关闭镜头/光晕/颗粒/暗角/漏光），再 `putImageData`。
 - 像素预算 `state.previewPixels` 初始 180k，根据帧耗时在 120k–300k 之间调整；DPR 上限 1.5。
 - 这比 GPU 慢，但保证老设备/无 WebGL 环境仍能取景。
 
@@ -253,7 +273,7 @@ SPOOLO.render(pixels, w, h, SPOOLO.FILMS[6], { ev: 0, grain: true, seed: 1 })
 
 `takeShot()` → `openProcessing(film, work)`：
 
-1. 显示遮罩，标题按工艺显示“C-41 冲印中 / E-6 冲印中 / 黑白显影中”。
+1. 显示遮罩，标题按工艺显示“C-41 冲印中 / ECN-2 冲印中 / E-6 冲印中 / K-14 冲印中”。
 2. 先等 40ms 让遮罩画出来，再启动 `work()`，避免首帧卡住。
 3. 四步“曝光 / 显影 / 定影 / 干燥”的进度条固定 500ms；它只是视觉节奏，**不对应真实的分阶段计算**。
 4. 动画结束后每 60ms 检查 `work()` 是否完成；完成后等 100ms 收起遮罩。
@@ -304,172 +324,86 @@ develop()（GPU/CPU） → toBlob(0.92) → scaledThumb() → Store.add() → �
 
 ### 4.1 色彩空间与数值约定
 
-- 源像素：`<video>`/`<canvas>` 的 RGBA 8-bit，通道 0–255。
+- 源像素：`<video>` / `<canvas>` 的 RGBA 8-bit，通道 0–255。
 - CPU 管线：`Uint8ClampedArray`，中间值按 0–255 浮点计算，写入时钳制。
 - GPU 管线：纹理采样归一化到 0–1，片元着色器最后 `clamp(col, 0, 1)`。
-- LUT：256 个输入级 → 256 个输出级，存为 768 字节的三通道数组（黑白为 256 字节单通道）。
-- 亮度统一使用 Rec.709 权重：
+- 色彩 LUT：33³ 的显示 sRGB → 显示 sRGB 3D LUT。CPU 存 Float32 三线性采样；GPU 存 8-bit 2D 图集，切片内由线性过滤、切片间手动 `mix`。
+- 光谱采样前会做 sRGB → 线性转换；EV 在线性光上缩放后查表，不烘进 LUT。
+- 亮度统一使用 Rec.709 权重（只用于空间效果）：
 
 ```js
 luma = r*0.2126 + g*0.7152 + b*0.0722
 ```
 
-- **不进行线性化/去 gamma**。所有对比、饱和、混合都直接在显示空间做。这意味着：
-  - 参数组合是“看起来对”的经验值，不是物理光照模型；
-  - 调整某个乳剂时，直接看取景/成片，不要按线性光公式推导；
-  - 若未来要引入线性工作流，必须同时重调全部 27 个预设，不能只改一处。
+- 不再有可手调的对比 / 提亮 / 伽马 / 增益 / 饱和度参数；所有色彩由 spektrafilm 的胶片与相纸数据决定。
 
-### 4.2 乳剂参数模型
+### 4.2 光谱乳剂与效果参数
 
-每个 `FILMS` 对象的结构：
+上游 profile 的字段经 `Spektra.effectsFor(filmId)` 转成 UI / 空间效果使用的对象：
 
 | 字段 | 类型 | 作用 |
 | --- | --- | --- |
-| `code` | string | 乳剂代号，如 `PT-400`；也是 LUT 缓存键的一部分 |
-| `name` / `en` | string | 中文/英文展示名 |
-| `process` | `C-41` / `E-6` / `B&W` | 冲印标题、卡片标签 |
-| `iso` | number | 展示与边码 |
-| `note` | string | 胶卷卡说明 |
-| `tone` | CSS color | 胶卷卡/暗盒的色块 |
-| `bw` | boolean | 黑白乳剂；此时色彩字段用标量 |
-| `contrast` | `[r,g,b]` 或 number | 围绕 0.5 的对比度 |
-| `lift` | `[r,g,b]` 或 number | 黑位抬升/压低，0–1 域 |
-| `gamma` | `[r,g,b]` 或 number | gamma 幂 |
-| `gain` | `[r,g,b]` 或 number | 增益，约 0.9–1.1 |
-| `shoulder` | 0–1 | 高光肩部起点，0.66–0.82；越大高光越亮、滚降越晚 |
-| `sat` | number | 饱和度倍率；黑白为 0 |
-| `vibrance` | number | 鲜艳度，低饱和像素获得更多提升 |
-| `shadowTint` | `[r,g,b]` | 阴影区通道微调，单位是 0–1 域（内部 ×255） |
-| `highTint` | `[r,g,b]` | 高光区通道微调 |
-| `halation` | object? | `{ amount, radius, threshold, color }`；黑白通常没有 |
-| `grain` | object | `{ amount, size, shadow }` |
+| `code` | string | 乳剂代号，如 `P400`；暗盒、边码、灯箱元数据 |
+| `name` / `en` | string | 展示名 |
+| `process` | `C-41` / `ECN-2` / `E-6` / `K-14` | 冲印标题、卡片标签 |
+| `iso` | number | 展示、边码、颗粒强度 |
+| `tone` | CSS color | 胶卷卡 / 暗盒色块 |
+| `grain` | object | `{ amount, size, shadow, coarse, coarseScale }` |
+| `halation` | object? | `{ amount, radius, threshold, color }` |
 | `vignette` | number | 暗角强度 0–1 |
 | `leak` | number | 漏光强度 0–1 |
+| `spectral` | `true` | 标记当前对象来自光谱层 |
 
-彩色乳剂的 `contrast/lift/gamma/gain` 是三元数组，黑白是标量。所有乳剂的 `grain.size` 目前都是 1（v1.11.8 起）。
-
-### 4.3 曲线与 LUT
-
-`buildLUT(film, ev)` 对每个输入级 `i`：
+`effectsFor()` 从胶片元数据推导颗粒与光晕：
 
 ```js
-x = (i / 255) * Math.pow(2, ev);           // EV 先折进输入
-y = (x - 0.5) * contrast + 0.5 + lift;      // 对比 + 黑位
-if (y < 0) y = 0;
-
-// 高光肩部：超过 shoulder 后用 tanh 平滑压缩
-if (y > shoulder) {
-  y = shoulder + (1 - shoulder) *
-      Math.tanh((y - shoulder) / (1 - shoulder));
-}
-
-if (gamma !== 1) y = Math.pow(y, gamma);    // gamma
-y *= gain;                                  // 通道增益
-clamp(y, 0, 1);
+grainAmt = 0.030 + 0.000045 * min(iso, 1600)
+         + (consumer ? 0.006 : 0) - (cine ? 0.005 : 0)
+         + 0.012 * push
+         * (positive ? 0.8 : 1)
+halation = antihalation === 'no' ? 0.32 : weak ? 0.20 : 0.12
 ```
 
-- 彩色：R/G/B 各自跑一遍，写入 `lut[i]`、`lut[i+256]`、`lut[i+512]`。
-- 黑白：先把源像素转 luma，再用单通道 `mono[i]`。
-- **EV 是折进 LUT 的**：`ev` 单位是“档”，`state.ev/3`。±2EV 对应 `2^±2` 的输入缩放。
-- LUT 缓存的键是 `film.code + '|' + ev.toFixed(2)`。乳剂参数是静态的；如果运行时改 `FILMS` 里的参数，必须刷新页面或清掉缓存，不能热改。
-- 256 级 LUT 在平滑渐变上可能出现轻微 banding；当前没有加 dithering。如果以后加入，应在 LUT 生成或最终合成阶段处理。
+这套映射是 SPOOLO 自己的近似，不是 spektrafilm 的逐胶片预设；上游的颗粒是全局物理粒子模型，且在我们的 33³ LUT 模式下本来就会被关闭。照片数据本身仍来自上游 profile。
 
-### 4.4 第一遍：色彩
+### 4.3 33³ LUT 烘焙
 
-对每个像素：
+`Spektra.bake(filmId, paperId, 33)` 对每个 LUT 格点执行：
 
-**黑白乳剂**
+1. 显示 sRGB → 线性 sRGB。
+2. 胶片 raw：`mIn` → XYZ → xy → 方形坐标 → 查 49×49 `tc` → 乘 `b=ΣXYZ`。
+3. 胶片显影：密度曲线 + DIR coupler 反推（`developFilm`）。
+4. 相纸曝光：胶片染料密度 → 透射光 → 乘相纸灵敏度 → 乘中灰曝光因子。
+5. 相纸显影：三层正态 CDF 密度模型。
+6. 扫描：相纸染料密度 → D50 光 → XYZ → sRGB 矩阵（`mOut`）。
+7. 输出色域映射：上游 `oklch` 变体，按 48×360 的 C_max 表做 Reinhard 式压缩。
+
+结果写进 `{ data: Float32Array, atlas: Uint8Array, size: 33, key }`。运行时只保留当前胶片 × 相纸一份；换卷或换纸会防抖 80ms 后重新烘焙。
+
+### 4.4 第一遍：光谱 LUT
+
+CPU（`films.js`）：
 
 ```js
-l = r*0.2126 + g*0.7152 + b*0.0722;
-r = g = b = mono[l | 0];
+Spektra.sampleSrgb(lut, data[i], data[i+1], data[i+2], ev, out);
+data[i] = out[0]; data[i+1] = out[1]; data[i+2] = out[2];
 ```
 
-**彩色乳剂**
+GPU（`gpu-develop.js` / 预览 `GL_FS`）：
 
-```js
-r = lut[r]; g = lut[g + 256]; b = lut[b + 512];
-
-// P1 串扰矩阵（行优先，行和为 1；默认值）
-r2 = 1.0000*r + 0.0225*g - 0.0225*b;
-g2 = -0.0150*r + 1.0000*g + 0.0150*b;
-b2 = 0.0100*r - 0.0100*g + 1.0000*b;
-r = clamp(r2, 0, 255); g = clamp(g2, 0, 255); b = clamp(b2, 0, 255);
-
-// 基础饱和 / 鲜艳度
-lum = r*0.2126 + g*0.7152 + b*0.0722;
-mx = max(r,g,b); mn = min(r,g,b);
-s = sat + vibrance * (1 - (mx - mn) / 255);
-r = lum + (r - lum) * s;
-g = lum + (g - lum) * s;
-b = lum + (b - lum) * s;
-
-// 色相相关饱和度（只缩放色度，不动亮度和色相）
-mx = max(r,g,b); mn = min(r,g,b); c = mx - mn;
-if (c > 0.0255) {
-  h = hue(r,g,b);                    // 0…2π，红=0，绿=2π/3，蓝=4π/3
-  w = 1 + hueSat * (0.035*cos(h - 0.60) + 0.014*cos(2h - 2.40));
-  w = clamp(w, 0.5, 1.5);
-  lum = r*0.2126 + g*0.7152 + b*0.0722;
-  r = lum + (r - lum) * w;
-  g = lum + (g - lum) * w;
-  b = lum + (b - lum) * w;
+```glsl
+vec3 specSample(vec3 c) {
+  vec3 lin = vec3(s2l(c.r), s2l(c.g), s2l(c.b)) * uSpecExp;
+  lin = clamp(lin, 0.0, 1.0);
+  vec3 t = vec3(l2s(lin.r), l2s(lin.g), l2s(lin.b));
+  // 以 t.rg 为切片内坐标、t.b 为切片号，两层手动插值
 }
 ```
 
-串扰矩阵的含义：
-
-- 三个通道不再各走各的 LUT，而是互相吸收一点，模拟染料层的非理想吸收/扫描串色。
-- 每一行系数之和为 1，因此纯灰 `r=g=b` 经过矩阵后不变；如果你新增矩阵，先保证这一点，否则整张照片会偏色。
-- 默认矩阵很轻（交叉项 0.01–0.0225）：红/绿互相拉近，蓝向青绿偏一点，肤色更暖、绿色更沉。乳剂可用 `matrix: [9 个数字]` 覆盖。
-- 矩阵输出要钳制到 0–255 再进饱和度，否则负通道会把后续 luma 和色相计算带偏。
-
-色相饱和度的含义：
-
-- 只改变色度，不改变色相；`hueSat` 默认 1，乳剂可用 `hueSat: 0` 关闭或 `0.5` 减半。
-- 默认曲线抬暖黄/肤色（h≈0.6 rad）、收青绿；第二个谐波负责让过渡更自然，不是三个硬分段。
-- CPU 预生成 512 级权重表（`hueTable`），避免每个像素两次 `cos`；GPU 使用同一条解析式。两者在 0.7° 的量化误差内一致。
-- 黑白乳剂跳过矩阵和色相饱和度，避免给灰阶引入无意义的颜色。
-
-饱和度公式的含义：
-
-- `sat` 给出基础饱和度；
-- `vibrance` 按当前像素的“色度跨度”加权：灰暗/低饱和的像素得到更多提升，已经很艳的像素提升较少，避免肤色/高光过曝。
-
-**分离调色**（黑白也会执行，虽然黑白预设的 tint 很接近中性）：
-
-```js
-nrm = lum / 255;
-shw = 1 - nrm;  hiw = nrm;
-r += st0*shw + ht0*hiw;   // st0 = shadowTint[0]*255
-g += st1*shw + ht1*hiw;
-b += st2*shw + ht2*hiw;
-```
-
-这一步就是“青绿阴影、暖高光”等乳剂性格的来源。tint 数值很小（约 −0.012…+0.05），改动时以 0.002 为步进试。
-
-矩阵和色相曲线的默认值都在 `films.js` 的 `COLOR_MODEL`，通过 `SP.colorModel(film)` 同时提供给 CPU、GPU 与取景预览；改默认值会影响全部彩色乳剂，只想调某一卷就用乳剂上的 `matrix` / `hueSat` 覆盖。`SP.COLOR_MODEL` 是可变的，调试时可以在控制台直接改，下次 render 立即生效。
-
-**高光去饱和与白点抬升**（彩色乳剂；黑白跳过第一项）：
-
-```js
-nrm = lum / 255;
-hl  = smoothstep(0.62, 1.0, nrm);
-ds  = hl * (film.highlightDesat ?? 0.28);
-r += (lum - r) * ds;  g += (lum - g) * ds;  b += (lum - b) * ds;
-
-nrm = lum / 255;
-hl2 = smoothstep(0.62, 1.0, nrm);
-wl  = hl2 * 0.03;
-r += (255 - r) * wl;  g += (255 - g) * wl;  b += (255 - b) * wl;
-```
-
-- `highlightDesat` 默认 0.28，可在乳剂上覆盖；黑白乳剂强制为 0。
-- 越接近白，颜色越向自身亮度收拢，模拟高光处染料先耗尽、最后只剩乳剂/片基的白。
-- 白点抬升固定 3%，只影响最亮部，让高光“透气”，不改变中间调。
-- 取景预览的 `GL_FS` 与 CPU 第一遍都实现了这两步；`drawPreviewGL` 必须在 `uploadLut()` 之前 `useProgram(glProg)`，否则 `uHiDesat` 会写到别的程序上。
-
-颜色第一遍不再直接写亮部遮罩：镜头层（4.4.1）之后才生成遮罩，供 halation 与全局 bloom 共用（见 4.5）。写入前钳制到 0–255。
+- EV 单位是“档”，`state.ev / 3`；`uSpecExp = 2^ev`，CPU 同样在线性光上乘。
+- LUT key 由 `filmId|paperId|size` 组成，不含 EV；调 EV 不重新烘焙。
+- 取景预览只做这一步；镜头、光晕、颗粒、暗角、漏光、闪光只在成片管线中执行。
+- 写入效果前钳制到 0–255（CPU）或 0–1（GPU）。
 
 ### 4.4.1 镜头光学（P2）
 
@@ -482,7 +416,7 @@ caPx   = lens.ca       * min(W,H)/1080;
 ```
 
 - `softness`：边缘 4-tap 柔化半径。`r²` 从中心 0 到角落 1，中心保持锐利，角落最柔。
-- `ca`：R/B 通道沿径向反向偏移的像素数，绿通道不动；黑白乳剂强制为 0。
+- `ca`：R/B 通道沿径向反向偏移的像素数，绿通道不动。
 - `film.lens: false` 整层关闭；`film.lens: { softness, ca }` 单独覆盖。
 - 默认值很轻：1080×1440 角落约 0.8px 柔化、0.8px 色差；1920×1280 会按短边放大到约 0.95px。
 - **GPU**：`LENS_FS` 渲染到 `lensT`。先算归一化 `rr = |p|² / |res/2|²`，`dir = normalize(p)`；R/B 采样坐标偏移 `dir * caPx * rr / res`，每个通道用 4-tap 柔化函数采样，共 12 次纹理读取。柔化采样坐标用 `clamp` 到 0–1。
@@ -492,11 +426,11 @@ caPx   = lens.ca       * min(W,H)/1080;
 
 ### 4.5 光晕 halation 与全局 bloom
 
-两者共享同一张亮部遮罩，但用两个不同的模糊半径：halation 紧贴高光、带乳剂颜色；bloom 更宽、更中性，模拟镜头/扫描仪的光学扩散。黑白乳剂没有 halation，但仍会走 bloom。
+两者共享同一张亮部遮罩，但用两个不同的模糊半径：halation 紧贴高光、带乳剂颜色；bloom 更宽、更中性，模拟镜头/扫描仪的光学扩散。当前光谱乳剂都带 halation；即使某卷没有，也仍会走 bloom。
 
 **亮部遮罩**
 
-对镜头后的像素（已包含色彩、高光去饱和/白点抬升和镜头柔化/色差）取 luma `nrm`：
+对镜头后的像素（已包含光谱 LUT 和镜头柔化/色差）取 luma `nrm`：
 
 ```js
 m = nrm > threshold ? (nrm - threshold) / (1 - threshold) : 0;
@@ -522,7 +456,7 @@ m = m * m;          // 平方让高光更集中
 - CPU：复制第一级模糊后的遮罩，`boxBlur(maskBloom, hw, hh, max(3, min(hw,hh)/60), 2)`。
 - GPU：把第一级结果 copy 到 `maskC`，再用同样的 9-tap 核、更大步长 `max(3, min(HW,HH)/60)/4` 做两轮 ping-pong。
 - 半径与分辨率挂钩，因此 1080×1440 和 1920×1280 成片的视觉扩散比例接近。
-- 默认 `amount`：彩色 0.12，黑白 0.10；默认颜色：彩色 `[1, 0.96, 0.90]`，黑白纯白。单个乳剂可以用 `film.bloom = { amount, color }` 覆盖。
+- 默认 `amount` 0.12，默认颜色 `[1, 0.96, 0.90]`；单个乳剂可以用 `film.bloom = { amount, color }` 覆盖。
 
 **合成**
 
@@ -542,7 +476,7 @@ c  = 1 - (1 - c) * (1 - mb * bloomColor);   // bloom：暖白 screen
 
 ### 4.6 颗粒 grain
 
-目标是“银盐结块”而不是电视雪花：细粒提供质地，低频团块提供起伏；振幅按亮度加权并软限幅；黑白必须单色，彩色以亮度颗粒为主。v1.14.0 重写了这一层。
+目标是“银盐结块”而不是电视雪花：细粒提供质地，低频团块提供起伏；振幅按亮度加权并软限幅；当前光谱乳剂都是彩色，颗粒以亮度为主、只留很弱的通道差。v1.14.0 重写了这一层。
 
 **CPU：细粒 hash + 低频 value noise**
 
@@ -578,11 +512,7 @@ n1 = hash(gx, gy, seedA);
 n2 = hash(gx + 53, gy + 97, seedB);           // seedB = seed*7 + 13
 nFine = n1 * 0.78;
 
-// 黑白：单色
-n = nFine + nC;
-r += n * ga;  g += n * ga;  b += n * ga;
-
-// 彩色：亮度主导，弱通道差
+// 亮度主导，弱通道差
 nL = nFine + nC;
 nCh = n2 * 0.30;
 r += (nL + nCh * 0.55) * ga;
@@ -592,7 +522,7 @@ b += (nL - nCh * 0.55) * ga;
 
 - `coarseScale` 默认按 ISO：≥1600 → 5，≥800 → 4，≥400 → 3，更低 → 2。
 - `coarseAmt` 默认：≥800 → 0.55，≥400 → 0.50，更低 → 0.38；乳剂可用 `grain.coarse` / `grain.coarseScale` 覆盖。
-- `grain.size > 1` 时细粒坐标会先除以 size；目前 27 种乳剂都是 1px。
+- `grain.size > 1` 时细粒坐标会先除以 size；当前光谱乳剂都是 1px。
 - 软限幅保证高感卷仍然粗，但不会把画面打成纯噪声。
 - 颗粒是**每张照片随机种子**（拍摄时生成），同一卷每张纹理不同。
 - 颗粒在成片分辨率上生成；缩略图直接从成片缩放，图案同源，不再二次生成。
@@ -623,7 +553,7 @@ else {
 ```
 
 - 振幅在 0–1 域做同样的 0.70 缩放与软限幅（阈值 0.125）。
-- `uGrainMono` 由 `film.bw` 决定；黑白不会再出现 R/G/B 各自独立的彩色颗粒。
+- `uGrainMono` 仍保留在着色器里，但当前光谱乳剂没有 `bw` 字段，统一传 0，走彩色亮度颗粒分支。
 
 **为什么取景里看不到颗粒？**
 
@@ -659,7 +589,7 @@ b += lf * 0.10;
 
 - CPU 预计算每一列的 `pow`，避免在像素循环里重复算。
 - GPU 用 `uLeakTop = 0.34*H`、`uLeakBot = 0.94*H`，`vUv.x` 从左侧起算，公式一一对应。
-- `LC-800`、`AV-200`、`NS-800`、`FL-200` 带漏光；其他乳剂为 0。
+- 漏光由 `film.leak` 控制；当前 `Spektra.effectsFor()` 对所有光谱乳剂都设为 0，保留算法供以后按乳剂启用。
 
 ### 4.9 闪光 flash
 
@@ -684,35 +614,25 @@ b += fa * 0.86;
 两套管线的顺序必须保持一致：
 
 ```
-1. 输入曝光（EV → LUT 输入）
-2. 分通道 LUT / 黑白 LUT
-3. 3×3 串扰矩阵（彩色，行和为 1）
-4. 饱和度 / 鲜艳度（彩色）
-5. 色相相关饱和度（彩色）
-6. 阴影 / 高光分离调色
-7. 高光去饱和 / 白点抬升（彩色去饱和；两者共同抬白点）
-8. 镜头柔化 / 横向色差（P2，中心 0 → 边缘最强）
-9. 生成亮部遮罩（从镜头后的颜色生成，halation + bloom 共用）
-10. 光晕 halation（screen）
-11. 全局 bloom（screen，更宽的第二级模糊）
-12. 颗粒 grain（按亮度加权，软限幅）
-13. 暗角 vignette（乘法）
-14. 漏光 leak（加法）
-15. 闪光 flash（加法）
-16. clamp 0…1
-17. 日期水印（Canvas2D，在管线之外）
+1. EV 在线性光上缩放（不烘进 LUT）
+2. spektrafilm 33³ 光谱 LUT
+3. 镜头柔化 / 横向色差（P2，中心 0 → 边缘最强）
+4. 生成亮部遮罩（从镜头后的颜色生成，halation + bloom 共用）
+5. 光晕 halation（screen）
+6. 全局 bloom（screen，更宽的第二级模糊）
+7. 颗粒 grain（按亮度加权，软限幅；可被「颗粒」开关关闭）
+8. 暗角 vignette（乘法）
+9. 漏光 leak（加法）
+10. 闪光 flash（加法）
+11. clamp 0…1
+12. 日期水印（Canvas2D，在管线之外）
 ```
 
 ### 4.11 CPU 与 GPU 的差异
 
 | 环节 | CPU (`films.js`) | GPU (`gpu-develop.js`) | 差异 |
 | --- | --- | --- | --- |
-| LUT | `buildLUT` 数组 | 同一 `buildLUT` 上传为 256×1 纹理 | 理论一致；8-bit 纹理采样 |
-| 饱和/鲜艳度 | 0–255 域 | 0–1 域 | 公式相同 |
-| 串扰矩阵 | 0–255 域，3×3，clamp | 0–1 域，`uM0..uM2` | 公式相同；GPU 用 `dot` |
-| 色相饱和度 | 512 级权重表 | 解析 `cos` | 0.7° 量化误差内一致 |
-| 分离调色 | 0–255 域 | 0–1 域 | 公式相同 |
-| 高光去饱和/白点 | `smoothstep(0.62,1)`，0–255 域 | 同一公式，0–1 域 | 一致 |
+| 光谱 LUT | Float32 三线性采样 | 8-bit 2D 图集，切片内线性 + 切片间 `mix` | 实测 64×48 渐变最大差 1/255，均值 0.14/255 |
 | 镜头柔化/CA | 邻域 5-tap + 双线性色差 | 每通道 4-tap 柔化，共 12 次采样 | CPU 略硬；强度同 |
 | 亮部遮罩 | 半分辨率，平方阈值，镜头后生成 | 半分辨率，平方阈值，读 `lensT` | 一致 |
 | halation 模糊 | 两遍盒式模糊 | 两轮 9-tap 高斯 | 形状略有差异 |
@@ -723,20 +643,18 @@ b += fa * 0.86;
 | 精度 | JS 浮点 + 8-bit 写回 | highp（可用时），8-bit FBO | GPU 略平滑 |
 | 日期 | Canvas2D | 无（由 app.js 统一叠加） | 一致 |
 
-结论：**GPU 是主路径，CPU 是兜底；两者不会像素级完全相同，但颜色方向、颗粒振幅和空间效果应一致。** 修改任何一个效果，都要同步检查另一个。v1.14.0 的实测（1080×1440）：同一灰场的颗粒 high-pass RMS 在 CPU/GPU 间差 <0.1，黄块高光饱和度差 <0.001；bloom 环带亮度因模糊核不同有 1–2 级差异。v1.15.0 加入 P1 后，CPU 彩色成片在测试机上约 200ms（P0 约 170ms，+18%），黑白因为跳过矩阵/色相基本不变（约 190ms vs 170ms，波动范围内）；色相权重表把逐像素 `cos` 换成了查表。P1 的 CPU/GPU 黄块高光饱和度差约 0.008（绝对），来自 512 级色相表量化和 JPEG 色度抽样，肉眼不可分。v1.16.0 加入 P2 后，CPU 彩色成片在测试机上约 184ms（与 P1 的 ~200ms 基本持平，遮罩改到镜头后生成抵消了一部分镜头开销），黑白约 170ms；镜头在取景预览里不执行，所以这是成片专属成本。CPU/GPU 的 bloom 环带亮度差约 2 级，来自镜头/遮罩采样方式；角落的柔化/色差方向一致，CPU 边缘略硬。
+结论：**GPU 是主路径，CPU 是兜底；光谱色彩应基本一致，空间效果允许轻微差异。** 修改任何一个效果，都要同步检查另一个。v1.18.0 的实测（64×48 渐变，EV +0.33）：CPU Float32 三线性与 GPU 8-bit 图集的最大通道差为 1/255，均值 0.14/255；颗粒、光晕、bloom 的采样方式不同，但权重与合成顺序一致。镜头在取景预览里不执行，所以这是成片专属成本。
 
 ### 4.12 取景预览与成片的对应关系
 
 | 内容 | 取景预览 | 成片 |
 | --- | --- | --- |
-| LUT / EV / 饱和 / 鲜艳度 / 分离调色 | 有（GPU shader 或 2D `render` 第一遍） | 有 |
-| 3×3 串扰 / 色相饱和度 | 有（`GL_FS` 或 2D `render` 第一遍） | 有 |
-| 高光去饱和 / 白点抬升 | 有 | 有 |
+| 光谱 LUT / EV | 有（`GL_FS` 或 2D `render` 第一遍） | 有 |
 | 镜头柔化 / 横向色差 | 无（预览保持锐利） | 有 |
 | 裁切 / 镜像 | 有（`uCrop` / `mirror`，或 2D 裁切） | `grabFrame` 已裁好并镜像 |
 | 光晕 halation | 无 | 有 |
 | 全局 bloom | 无 | 有 |
-| 颗粒 grain | 无 | 有 |
+| 颗粒 grain | 无 | 有（功能键「颗粒」可关） |
 | 暗角 vignette | CSS 径向渐变近似 | 逐像素径向 |
 | 漏光 leak | CSS 左侧渐变近似 | 逐像素光带 |
 | 闪光 | 触发时全屏白闪 | 中心暖光叠加 |
@@ -757,53 +675,27 @@ b += fa * 0.86;
 - 旧版本底片没有 `thumbW`，打开影集时会在后台逐张从原图重建为 720px，并写回 IndexedDB；`Store.update` 先读后写，重建期间被删除的照片不会被写回。
 - 720px 的选择：影集格子约 165 CSS × DPR3 ≈ 495 设备像素，720 会被浏览器略缩小；灯箱约 282 CSS × DPR3 ≈ 846 设备像素，从 1080 略缩小。两者缩小倍率接近，颗粒图案同源。
 
-### 4.14 新增一种乳剂
+### 4.14 新增一种光谱乳剂 / 相纸
 
-1. 在 `js/films.js` 的 `FILMS` 数组里追加对象。彩色乳剂示例：
+1. 把上游 profile JSON 放进 `spektrafilm/src/spektrafilm/data/profiles/`。
+2. 在 `tools/build-spektra-data.py` 的 `FILM_ORDER` / `PAPER_ORDER` 里追加 stock 名；胶片还要在 `FILM_META` 里给出 `(code, en, tone, process)`，必要时在 `FILM_ISO` 里给出真实 ISO（片名里的数字不总是 ISO）。
+3. 重新生成数据：
 
-```js
-{
-  code: 'XX-400', name: '示例乳剂', en: 'EXAMPLE', process: 'C-41', iso: 400,
-  note: '一句话风格说明。',
-  tone: '#b08a70',
-  contrast: [1.00, 1.00, 1.00],
-  lift: [0.015, 0.015, 0.015],
-  gamma: [1.00, 1.00, 1.00],
-  gain: [1.00, 1.00, 1.00],
-  sat: 1.05, vibrance: 0.12,
-  shadowTint: [0, 0.004, 0.008], highTint: [0.012, 0.004, 0],
-  shoulder: 0.72,
-  halation: { amount: 0.12, radius: 8, threshold: 0.75, color: [1, 0.45, 0.28] },
-  grain: { amount: 0.050, size: 1, shadow: 1.6 },
-  vignette: 0.20, leak: 0
-  /* 以下均可省略，省略时用全局默认：
-     highlightDesat: 0.28,
-     matrix: [1.000, 0.0225, -0.0225, -0.015, 1.000, 0.015, 0.010, -0.010, 1.000],
-     hueSat: 1,
-     lens: { softness: 0.8, ca: 0.8 },
-     bloom: { amount: 0.12, color: [1, 0.96, 0.90] },
-     grain.coarse: 0.50, grain.coarseScale: 3 */
-}
+```bash
+python tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js
 ```
 
-2. 黑白乳剂加 `bw: true`，把 `contrast/lift/gamma/gain` 写成标量，不写 `sat/vibrance/halation`；`highlightDesat` 会被强制为 0，矩阵和色相饱和度也会跳过，色差会被强制为 0（边缘柔化仍保留），颗粒自动变单色，bloom 仍默认开启（0.10、白色）。
-3. 胶片数量会自动更新：`renderFilmList()` 设置 `#filmCount`，旋钮的 `aria-valuemax` 也按 `FILMS.length` 写；不需要改 HTML 里的 27。
-4. 更新 `README.md` 的乳剂表和版本号；同步顶盖/页脚/`?v=`。
-5. 用至少这些素材测试：灰卡（看颗粒和 banding）、肤色（看低饱和/高光）、蓝天（看分通道 LUT）、霓虹（看 halation/漏光）、黑白（看 luma 曲线）。
-6. 同时看取景和成片；再禁用 WebGL 检查 CPU 兜底。
+4. 刷新页面；`renderFilmList()` / `renderPaperList()` 会自动按数据数量生成卡片，旋钮的 `aria-valuemax` 也按 `Spektra.films().length` 写。
+5. 如果要调整颗粒 / 光晕，改 `js/spektra.js` 的 `effectsFor()`；要调整空间效果，按 4.15 同时改 CPU / GPU。
+6. 更新 `README.md` 的乳剂 / 相纸表和版本号；同步顶盖/页脚/`?v=`。
+7. 测试素材：灰卡（检查 LUT 色阶与颗粒）、肤色（检查色彩链）、蓝天（检查色域压缩）、霓虹（检查 halation），再禁用 WebGL 检查 CPU 兜底。
 
 调参建议：
 
-- 先调 `contrast/lift/gamma/gain` 到整体明暗和反差满意；
-- 再用 `shoulder` 控制高光滚降；
-- 用 `sat/vibrance` 定饱和度，不要用 gain 硬拉饱和；
-- 用 `shadowTint/highTint` 做乳剂性格，步进 0.002–0.005；
-- 用 `matrix` 做乳剂级串色，先用 0.005–0.02 的交叉项试；每行之和保持 1，否则灰会偏色；
-- 用 `hueSat`（0–1.5）做色相饱和度，默认 1；调整 `COLOR_MODEL.hue` 的余弦系数前先看肤色、绿色和蓝色三块色卡；
-- 用 `highlightDesat`（0.15–0.35）控制高光收色，用 `bloom.amount`（0.08–0.16）控制辉光；
-- 用 `lens.softness` / `lens.ca`（1080 短边像素，常用 0.4–1.2）控制镜头感；先看高对比网格的角落，过 1.5 就开始像廉价镜头；
-- 最后加 halation/grain/vignette/leak，避免空间效果掩盖颜色问题；
-- 颗粒先看灰卡：`grain.amount` 定总体，`grain.shadow` 定暗部，`grain.coarse` / `coarseScale` 定团块；不要用提高 amount 来解决“看起来像数码噪点”，那通常是细粒过多或彩色通道差过强。
+- 色彩问题优先查上游 profile 与 `bake()` 链路，不要在后处理里用曲线“补色”；
+- 颗粒先看灰卡：`grain.amount` 定总体，`grain.shadow` 定暗部，`grain.coarse` / `coarseScale` 定团块；
+- 光晕先看白色高光与灰底边缘，`threshold` 保持 0.5–0.85，避免除零；
+- 镜头/暗角/漏光是空间效果，调完要同时看取景与成片。
 
 ### 4.15 修改或新增一个空间效果
 
@@ -818,14 +710,12 @@ b += fa * 0.86;
 
 ### 4.16 色彩管线常见坑
 
-- **把 sRGB 当线性光**：整套参数是按显示空间调的；擅自加 `pow(2.2)` 会让全部乳剂发灰/偏色。
-- **只改 GPU 或只改 CPU**：用户在无 WebGL 设备上会看到另一套颜色。
-- **改 LUT 却不清缓存**：`lutCache` 的键只有 `code|ev`，热改乳剂参数不会生效；刷新页面。
-- **饱和度过高导致色相偏移**：饱和是围绕 luma 拉伸，极端值会削顶；用 vibrance 而不是无限加 sat。
-- **矩阵行和不为 1**：中性灰会被染色；任何新矩阵先跑 50% 灰块，确认 R/G/B 仍然相等。矩阵输出要 clamp 后再算亮度/色相。
-- **色相饱和度不是万能调味**：曲线过强会让相邻色相出现“色带”或不自然的肤色；CPU 用 512 级表、GPU 用解析式，改系数后两边都要看。
+- **只改 GPU 或只改 CPU**：用户在无 WebGL 设备上会看到另一套颜色。光谱 LUT 是两个管线共用的同一份数据，但采样路径不同。
+- **EV 烘进 LUT**：光谱 LUT 不含 EV；如果误把 EV 乘进格点，预览和成片会重复曝光。EV 必须在线性光上、查表前缩放。
+- **LUT 缓存 key 不完整**：key 必须包含 `filmId|paperId|size`；只按胶片缓存会在换相纸后继续用旧图。
+- **在 LUT 之后用曲线“修色”**：光谱链的颜色是物理链路的结果；后处理加对比/饱和会破坏胶片与相纸的响应，应该改上游 profile 或 `bake()`。
 - **halation threshold 不要设 1**：`(nrm - threshold)/(1 - threshold)` 会除零；保持在 0.5–0.85。
-- **颗粒网格/重复**：GPU 不要退回浮点大坐标 hash；使用 512 噪声纹理 + 双尺度采样，并且必须按 512 块加整数位移。少了这一步，灰场上每隔 512px 会出现同一片颗粒（即使肉眼不易察觉，放大或做相关性分析会很明显）。
+- **颗粒网格/重复**：GPU 不要退回浮点大坐标 hash；使用 512 噪声纹理 + 双尺度采样，并且必须按 512 块加整数位移。少了这一步，灰场上每隔 512px 会出现同一片颗粒。
 - **颗粒像数码噪点**：先检查是不是细粒权重太高、彩色通道差太大，或者 ga 没有软限幅；不要只靠降低 `amount`。
 - **颗粒尺寸与分辨率**：1px 细粒在 1920 成片和 720 缩略图上的物理大小不同；缩略图直接缩放，不要再生成一遍颗粒。
 - **bloom 与 halation 共用遮罩**：改 `halation.threshold` 会同时改变 bloom 的覆盖范围；如果只想调 bloom，优先改 `bloom.amount`，不要动阈值。
@@ -833,11 +723,113 @@ b += fa * 0.86;
 - **镜头过强**：先看 8px 黑白棋盘/格子图的四角；`softness` 超过 1.5 或 `ca` 超过 1.5 会明显削弱文字和细节。取景预览不叠加镜头层，不能只靠取景判断。
 - **CPU 镜头近似**：CPU 的柔化是 5-tap 邻域、色差是双线性，和 GPU 的 12-tap 不完全一样；角落会略硬。改参数时两边都要看成片。
 - **预览与成片不一致**：确认效果是否本来就不在预览里（镜头/颗粒/光晕/bloom/闪光/日期）。
-- **Y 轴方向**：GPU 源纹理 `UNPACK_FLIP_Y_WEBGL = true`；漏光/日期/坐标方向容易在这里搞反。
+- **Y 轴方向**：GPU 源纹理 `UNPACK_FLIP_Y_WEBGL = true`；光谱图集上传时临时改为 `false`，漏光/日期/坐标方向容易在这里搞反。
 - **日期水印**：在管线外由 Canvas2D 叠加，使用冲印时的系统日期；拍摄跨午夜时可能与快门时间差一天。
-- **8-bit LUT banding**：极端渐变可能出现台阶；需要时在 LUT 或合成阶段加 dither，但会改变现有观感。
+- **8-bit 图集 banding**：3D LUT 以 8-bit 图集上传，极端渐变可能出现台阶；需要时提高图集精度或加 dither，但会改变现有观感。
 
 ---
+
+### 4.17 光谱链路（spektrafilm 移植，唯一色彩引擎）
+
+这是当前唯一的色彩引擎：不再有 256 级 LUT、串扰矩阵、色相饱和度与分离
+调色，而是直接查一张 33³ 的显示 sRGB → 显示 sRGB 3D LUT。空间效果
+（镜头、光晕、bloom、颗粒、暗角、漏光、闪光）接在色彩之后，参数来自
+`Spektra.effectsFor()`。胶卷与相纸分别占暗房台的两个标签页；换卷/换纸
+都会重新烘焙当前组合。
+
+**来源与许可**：算法与胶片 / 相纸数据来自
+[spektrafilm](https://github.com/andreavolpato/spektrafilm)（Andrea Volpato）。
+代码 GPL-3.0-or-later，profile 数据 CC BY-SA 4.0；本项目整体同为
+GPL-3.0-or-later。完整署名与修改说明见 `THIRD_PARTY.md`，上游 profile
+许可原文见 `third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt`。**不要删除
+这些文件或其中的署名**，这是数据许可的强制要求。
+
+#### 数据包
+
+`js/spektra-data.js` 由 `tools/build-spektra-data.py` 生成，结构：
+
+```
+S.SPEKTRA_DATA = {
+  version, source,
+  shared: { cmf, illu: {D50,D55,D65,'TH-KG3'}, dichroic, logExposure,
+            kg3, oklabCmax },
+  films: [ { id, name, code, en, tone, process, iso, type, positive,
+             ref, view, antihalation, use, consumer, cine, push, target,
+             mIn, tc, tcSize, tcMax, dc, cd, bd, coupler } ],
+  papers:[ { id, name, kind, type, positive, view, sens, cd, bd,
+             centers, amps, sigmas, mOut } ],
+  neutral: { paperId: { filmId: [C,M,Y] } }
+}
+```
+
+- `tc`：每张胶片按 hanatos2025 方法预计算的 49×49×3 光谱上采样 LUT，
+  `tcMax` 是 Uint16 量化前的最大值；运行时按方形坐标
+  `xq=(1−x)², yq=y/(1−x)` 双线性采样。
+- `dc`：胶片密度曲线（256×3，未归一化）；`cd` / `bd`：染料通道密度与
+  片基密度（81 个波长，380–780nm，5nm）；`coupler`：DIR coupler 矩阵。
+- `sens`：相纸光谱灵敏度（81×3）；`centers/amps/sigmas`：相纸密度曲线的
+  三层正态 CDF 参数。
+- `mIn` / `mOut`：线性 sRGB D65 → 胶片参考光源 XYZ（CAT16）与
+  相纸观察光 XYZ → sRGB（CAT02）。
+- `neutral`：上游 `neutral_print_filters.json` 的中性滤色片 CC 值；
+  缺组合时回退 `[0,65,55]`。
+
+`tools/build-spektra-data.py` 的输入是上游 checkout（profiles + `irradiance_xy_tc.npy`
++ 滤色片数据）。重新生成：
+
+```bash
+python tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js
+```
+
+#### 运行时链路
+
+`Spektra.bake(filmId, paperId, 33)` 对每个 LUT 格点执行：
+
+1. 显示 sRGB → 线性 sRGB（`srgbToLinear`）。
+2. 胶片 raw：`mIn` → XYZ → xy → 方形坐标 → 查 `tc` → 乘 `b=ΣXYZ`。
+3. 胶片显影：密度曲线 + DIR coupler 反推（`developFilm`）。
+4. 相纸曝光：胶片染料密度 → 透射光 → 乘相纸灵敏度 → 乘中灰曝光因子。
+   中灰因子用未归一化密度曲线在输入 0.184 处计算，取三通道几何平均的
+   倒数，对应上游 `_compute_exposure_factor_midgray`。
+5. 相纸显影：三层正态 CDF 密度模型。
+6. 扫描：相纸染料密度 → D50 光 → XYZ → sRGB 矩阵（`mOut`）。
+7. 输出色域映射：上游 `oklch` 变体，按 48×360 的 C_max 表做 Reinhard
+   软膝压缩。
+8. 线性 sRGB → 显示 sRGB，写入 Float32 LUT。
+
+LUT 的输入输出都是**显示 sRGB**，所以取景视频 / 导入的 8-bit 图可以
+直接查表。EV 不烘进 LUT：CPU / GPU 都先把输入解码到线性光、乘 `2^EV`、
+再编码回显示 sRGB 后查表；超过 1.0 的高光钳到 1.0（LUT 只覆盖显示白点
+以内），这是与上游线性 ProPhoto 输入的主要差异之一。
+
+#### 采样与集成
+
+- CPU：`films.js` 的 `render()` 在 `opt.spectralLut` 存在时走
+  `spektra.sampleSrgb()`，其余空间效果不变。
+- 成片 GPU：`gpu-develop.js` 的 `COLOR_FS` 只做光谱采样；LUT 以 2D 图集
+  上传到纹理单元 2，每层内用线性过滤做双线性，两层之间手动 `mix()`，
+  共 2 次采样。
+- 取景 GPU：`app.js` 的 `GL_FS` 同样在纹理单元 2 上采样图集，`lutKey`
+  就是 `spec.key`（含胶片/相纸/尺寸），换卷/换纸才重新上传。
+- Canvas2D 兜底：`drawPreview2D()` 把同一份 LUT 传给 `S.render()`。
+- 灯箱元数据记录 `spectral` / `spectralFilm` / `spectralPaper` 与名称；
+  旧底片没有这些字段时只显示乳剂代号。
+
+性能与内存：本机 33³ 烘焙约 90–150ms，数据包约 600KB；LUT 只保留当前
+一组，换卷/换纸会重新计算（防抖 80ms）。光谱数据在启动后自动加载，
+不在首屏 HTML 里同步阻塞；加载完成后才允许按快门。胶卷库与相纸页分别
+渲染 20 张乳剂卡和 8 张相纸卡，选择后立即更新暗盒与预览。
+
+#### 与上游的差异
+
+- 输入是显示 sRGB，上游默认是线性 ProPhoto RGB；超出 sRGB 色域的颜色
+  会被钳制，无法完全复现上游对 ProPhoto 深绿 / 深青的处理。
+- `tc` LUT 从 192×192 重采样到 49×49，并且最终再烘焙到 33³；中性灰
+  误差约 1e-3 级，饱和色在 0.01–0.02 sRGB 量级。
+- 未移植：裁切、自定义调色、Raw 解码、镜头 / 传感器模拟、扫描仪 LUT、
+  眩光、扩散、颗粒、光晕。SPOOLO 自己的空间效果仍会叠加在光谱色彩上。
+- 相纸 / 胶片组合没有做兼容性限制，任意组合都可选；上游的中性滤色片
+  数据按「相纸 → 光源 → 胶片」查找，缺失时回退固定值。
 
 ## 5. 存储、影集与导出
 
@@ -982,8 +974,9 @@ python -m http.server 8123
 
 **拍摄主链路**
 
-- 27 种乳剂各拍一张，编码/尺寸正确。
+- 20 种光谱乳剂各拍一张，编码/尺寸正确；8 种相纸各换一次，确认 LUT 重烘焙。
 - EV 到 ±2.0，预览/成片变化一致。
+- 颗粒开关开/关各拍一张，确认成片有/无颗粒，刷新后状态保持。
 - 3s / 10s 定时；倒计时中切“关”应取消。
 - 强制闪光、自动闪光（暗图触发、亮图不触发）。
 - 拍满 36 张自动回卷；手动回卷；回卷中刷新不重复编号。
@@ -1021,7 +1014,7 @@ python -m http.server 8123
   - 顶盖铭牌（`index.html` 的 `.maker-meta`）
   - 暗房页脚（`.lab-foot`）
   - `README.md` 头部与版本记录
-  - 所有 CSS/JS 的 `?v=` 指纹
+  - 所有 CSS/JS 的 `?v=` 指纹（包括 `app.js` 里动态注入的 `js/spektra*.js`）
 - 发布：提交到特性分支 → 测试 → 快进合并 `main` → 推送；GitHub Pages 从 `main` 根目录发布。
 - 改动色彩/乳剂时，至少更新 README 的乳剂表和变更记录；新增/修改管线时同步更新本文第 4 节。
 - 不要引入构建步骤或运行时依赖；保持单文件可读、可直接部署。
@@ -1030,15 +1023,17 @@ python -m http.server 8123
 
 ## 9. 已知限制与设计取舍
 
-- **显示参考色彩**：不做 ICC/线性光/广色域；颜色是经验调参，换设备可能略有差异。
-- **色彩模型是经验的**：P1 的 3×3 串扰矩阵和色相饱和度是全局经验参数，不是光谱/染料化学模拟；极端纯色（激光、霓虹灯管）可能偏离真实胶片。
-- **8-bit LUT**：256 级，极端渐变可能 banding；没有 dithering。
-- **预览 ≠ 成片**：取景不含镜头柔化/色差、颗粒、halation、bloom、闪光、日期；暗角/漏光是 CSS 近似。高光去饱和/白点抬升、串扰和色相饱和度已在预览里。
+- **显示参考色彩**：输入/输出是 sRGB；光谱采样内部会做线性化，但不做 ICC/广色域；换设备可能略有差异。
+- **光谱链是移植子集**：输入是显示 sRGB（上游默认线性 ProPhoto RGB），超出 sRGB 的颜色会被钳制；`tc` LUT 从 192² 降到 49²，最终色彩再烘焙到 33³，饱和色与上游有约 0.01–0.02 sRGB 的差异。裁切、自定义调色、Raw 解码、扫描仪 LUT、眩光/扩散等没有移植。
+- **光谱 LUT 只保留当前一组**：换胶片/相纸会重新烘焙（90–150ms，防抖 80ms），启动时还会下载约 600KB 的数据包；离线环境第二次打开会命中浏览器缓存，但清缓存后需要重新联网。
+- **8-bit 图集**：33³ LUT 以 8-bit 图集上传 GPU，极端渐变可能 banding；没有 dithering。
+- **预览 ≠ 成片**：取景只有光谱 LUT 与 CSS 暗角/漏光近似；不含镜头柔化/色差、颗粒、halation、bloom、闪光、日期。
 - **镜头层是成片专属**：CPU 柔化比 GPU 略硬；灰尘/划痕、片框/齿孔默认不烘进成片。
 - **CPU/GPU 不完全一致**：镜头/光晕/bloom 模糊核、精度、FBO 8-bit 会带来轻微差异；以视觉一致为目标。
 - **颗粒是成片分辨率的像素级效果**：1px 细粒 + 2–5px 低频团块在成片分辨率上生成；缩略图直接缩放，尺寸小的时候看起来更细。高感卷的团块更明显，但在纯灰场上仍会比真实胶片更均匀。
 - **日期是冲印时系统时间**：不是快门时间的独立快照；跨午夜可能差一天。
 - **成片长边上限 1920**；导入小图不放大。
+- **导入格式受浏览器解码能力限制**：JPEG / PNG / WebP / GIF / AVIF 可用；HEIC/HEIF、TIFF、相机 RAW、JPEG XL 在多数桌面浏览器里无法解码，需先导出 JPEG。手机相册的“兼容性最佳”或分享时选择 JPEG 可以避免 HEIC。导入优先使用 `blob:` URL，大图不必先转成几十 MB 的 base64。
 - **iPhone 不能网页控制 LED 闪光灯**；回退为屏幕补光。后摄的屏幕在手机背面，无法照亮前方，软件只能延长补光、重试并最多补回 4EV；真正夜拍后摄需要硬件闪光灯或外部光源。
 - **iOS 摄像头/视频/WebGL 会被系统挂起或回收**；代码有恢复路径，但仍建议真机回归。
 - **IndexedDB 失败会退化为内存**；关页后这些照片会丢，提示只在当次会话。
@@ -1052,23 +1047,25 @@ python -m http.server 8123
 
 | 术语 | 含义 |
 | --- | --- |
-| LUT | Look-Up Table，256 级输入到输出的映射；本项目的色彩曲线主体 |
-| EV | 曝光补偿，以档为单位；UI 以 1/3 档步进 |
-| shoulder | 高光肩部起点，超过后用 tanh 压缩 |
+| LUT | Look-Up Table；本项目指 spektrafilm 烘焙的 33³ 显示 sRGB 3D LUT |
+| EV | 曝光补偿，以档为单位；UI 以 1/3 档步进，在线性光上缩放后查 LUT |
 | halation | 胶片高光在乳剂层间反射形成的橙红光晕 |
-| bloom | 高光向周围扩散的柔和辉光；本项目用比 halation 更宽的第二级模糊实现，黑白也有 |
-| grain | 颗粒：细粒随机扰动 + 低频团块，按亮度加权并软限幅，暗部更明显 |
-| crosstalk matrix | 3×3 通道串扰矩阵，模拟染料层互相吸收；行和为 1 以保持中性灰 |
-| hue-dependent saturation | 随色相变化的饱和度曲线；只缩放色度，不改变色相和亮度 |
+| bloom | 高光向周围扩散的柔和辉光；用比 halation 更宽的第二级模糊实现 |
+| grain | 颗粒：细粒随机扰动 + 低频团块，按亮度加权并软限幅，暗部更明显；可用功能键关闭 |
 | lens softness | 镜头边缘柔化；中心 0、角落最强，按分辨率缩放 |
 | lateral CA | 横向色差；R/B 通道沿径向反向偏移，绿通道不动 |
-| split-tone | 阴影/高光分离调色 |
-| display-referred | 直接在显示空间（sRGB 8-bit）计算，不做线性化 |
+| display-referred | 输入/输出在 sRGB 显示空间；光谱采样内部临时线性化 |
 | FBO | WebGL Framebuffer Object，离屏渲染目标 |
 | ping-pong | 两张纹理交替作为输入/输出做多轮模糊 |
 | screen blend | `1-(1-a)(1-b)`，光晕用的加法混合 |
 | DPR | devicePixelRatio，设备像素比 |
 | store-only ZIP | 只存不压缩的 ZIP（method 0） |
+| 光谱链 | 用 spektrafilm 的胶片/相纸数据走完整光谱色彩链；当前唯一色彩引擎 |
+| tc LUT | hanatos2025 光谱上采样查找表，按方形坐标 `xq=(1−x)², yq=y/(1−x)` 索引 |
+| DIR coupler | 显影抑制剂释放（Development Inhibitor Releasing）耦合项，让一层密度影响另一层 |
+| 3D LUT | 三维颜色查找表；本项目用 33³ 格点 + 三线性采样 |
+| CDF 密度模型 | 相纸密度曲线用三层正态累积分布函数叠加表示 |
+| OkLch | 以 OKLab 为基础的感知均匀色空间；输出色域压缩在其 L/C 平面上做软膝 |
 
 ---
 

@@ -1,6 +1,6 @@
 /* ==========================================================================
    SPOOLO · 成片 GPU 管线
-   - 色彩：LUT / 饱和 / 分离调色
+   - 色彩：spektrafilm 移植层烘焙的 3D LUT（不再有自有胶卷曲线）
    - 光晕：半分辨率亮部遮罩 + 可分离高斯模糊 + screen 混合
    - 颗粒 / 暗角 / 漏光 / 闪光
    源画布由 grabFrame 裁好，这里只做像素处理；失败时 app.js 回退 CPU 管线。
@@ -22,53 +22,32 @@
 
   var COLOR_FS = PRECISION + [
     'varying vec2 vUv;',
-    'uniform sampler2D uSrc, uLut;',
-    'uniform float uMono, uSat, uVib, uHiDesat;',
-    'uniform float uHueSat, uHueA1, uHueP1, uHueA2, uHueP2;',
-    'uniform vec3 uM0, uM1, uM2;',
-    'uniform vec3 uST, uHT;',
-    'float lutR(float v){ return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).r; }',
-    'float lutG(float v){ return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).g; }',
-    'float lutB(float v){ return texture2D(uLut, vec2(v * 0.99609375 + 0.001953125, 0.5)).b; }',
+    'uniform sampler2D uSrc, uSpec;',
+    'uniform float uSpecExp, uSpecSize, uSpecTiles, uSpecRows;',
+    'float s2l(float x){ return x <= 0.04045 ? x / 12.92 : pow((x + 0.055) / 1.055, 2.4); }',
+    'float l2s(float x){ return x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0 / 2.4) - 0.055; }',
+    'vec3 specSlice(float z, vec2 p){',
+    '  float tx = mod(z, uSpecTiles) * uSpecSize;',
+    '  float ty = floor(z / uSpecTiles) * uSpecSize;',
+    '  return texture2D(uSpec, vec2((tx + 0.5 + p.x) / (uSpecTiles * uSpecSize),',
+    '                               (ty + 0.5 + p.y) / (uSpecRows * uSpecSize))).rgb;',
+    '}',
+    'vec3 specSample(vec3 c){',
+    '  vec3 lin = vec3(s2l(c.r), s2l(c.g), s2l(c.b)) * uSpecExp;',
+    '  lin = clamp(lin, 0.0, 1.0);',
+    '  vec3 t = vec3(l2s(lin.r), l2s(lin.g), l2s(lin.b));',
+    '  float S = uSpecSize;',
+    '  vec2 p = t.rg * (S - 1.0);',
+    '  float z = t.b * (S - 1.0);',
+    '  float z0 = floor(z);',
+    '  if (z0 > S - 2.0) z0 = S - 2.0;',
+    '  vec3 a = specSlice(z0, p);',
+    '  vec3 b = specSlice(z0 + 1.0, p);',
+    '  return mix(a, b, z - z0);',
+    '}',
     'void main(){',
     '  vec3 c = texture2D(uSrc, vUv).rgb;',
-    '  vec3 col;',
-    '  if (uMono > 0.5) {',
-    '    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));',
-    '    col = vec3(lutR(l));',
-    '  } else {',
-    '    vec3 t = vec3(lutR(c.r), lutG(c.g), lutB(c.b));',
-    '    t = clamp(vec3(dot(t, uM0), dot(t, uM1), dot(t, uM2)), 0.0, 1.0);',
-    '    float lum = dot(t, vec3(0.2126, 0.7152, 0.0722));',
-    '    float mx = max(max(t.r, t.g), t.b);',
-    '    float mn = min(min(t.r, t.g), t.b);',
-    '    float s = uSat + uVib * (1.0 - (mx - mn));',
-    '    col = vec3(lum) + (t - vec3(lum)) * s;',
-    '    float mx2 = max(max(col.r, col.g), col.b);',
-    '    float mn2 = min(min(col.r, col.g), col.b);',
-    '    float ch = mx2 - mn2;',
-    '    if (uHueSat > 0.0001 && ch > 0.0001) {',
-    '      float h;',
-    '      if (mx2 == col.r) h = (col.g - col.b) / ch;',
-    '      else if (mx2 == col.g) h = (col.b - col.r) / ch + 2.0;',
-    '      else h = (col.r - col.g) / ch + 4.0;',
-    '      if (h < 0.0) h += 6.0;',
-    '      h *= 3.14159265 / 3.0;',
-    '      float w = 1.0 + uHueSat * (uHueA1 * cos(h - uHueP1) + uHueA2 * cos(2.0 * h - uHueP2));',
-    '      w = clamp(w, 0.5, 1.5);',
-    '      float l2 = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-    '      col = vec3(l2) + (col - vec3(l2)) * w;',
-    '    }',
-    '  }',
-    '  float nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-    '  col += uST * (1.0 - nrm) + uHT * nrm;',
-    '  nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-    '  float hl = smoothstep(0.62, 1.0, nrm);',
-    '  col = mix(vec3(nrm), col, 1.0 - hl * uHiDesat);',
-    '  nrm = dot(col, vec3(0.2126, 0.7152, 0.0722));',
-    '  float hl2 = smoothstep(0.62, 1.0, nrm);',
-    '  col = mix(col, vec3(1.0), hl2 * 0.03);',
-    '  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);',
+    '  gl_FragColor = vec4(clamp(specSample(c), 0.0, 1.0), 1.0);',
     '}'
   ].join('\n');
 
@@ -255,21 +234,11 @@
     var U = {
       color: {
         src: gl.getUniformLocation(colorP, 'uSrc'),
-        lut: gl.getUniformLocation(colorP, 'uLut'),
-        mono: gl.getUniformLocation(colorP, 'uMono'),
-        sat: gl.getUniformLocation(colorP, 'uSat'),
-        vib: gl.getUniformLocation(colorP, 'uVib'),
-        st: gl.getUniformLocation(colorP, 'uST'),
-        ht: gl.getUniformLocation(colorP, 'uHT'),
-        hiDesat: gl.getUniformLocation(colorP, 'uHiDesat'),
-        m0: gl.getUniformLocation(colorP, 'uM0'),
-        m1: gl.getUniformLocation(colorP, 'uM1'),
-        m2: gl.getUniformLocation(colorP, 'uM2'),
-        hueSat: gl.getUniformLocation(colorP, 'uHueSat'),
-        hueA1: gl.getUniformLocation(colorP, 'uHueA1'),
-        hueP1: gl.getUniformLocation(colorP, 'uHueP1'),
-        hueA2: gl.getUniformLocation(colorP, 'uHueA2'),
-        hueP2: gl.getUniformLocation(colorP, 'uHueP2')
+        spec: gl.getUniformLocation(colorP, 'uSpec'),
+        specExp: gl.getUniformLocation(colorP, 'uSpecExp'),
+        specSize: gl.getUniformLocation(colorP, 'uSpecSize'),
+        specTiles: gl.getUniformLocation(colorP, 'uSpecTiles'),
+        specRows: gl.getUniformLocation(colorP, 'uSpecRows')
       },
       lens: {
         src: gl.getUniformLocation(lensP, 'uColor'),
@@ -323,7 +292,7 @@
 
     gl.useProgram(colorP);
     gl.uniform1i(U.color.src, 0);
-    gl.uniform1i(U.color.lut, 1);
+    gl.uniform1i(U.color.spec, 2);
     gl.useProgram(lensP);
     gl.uniform1i(U.lens.src, 0);
     gl.useProgram(brightP);
@@ -338,7 +307,7 @@
     gl.uniform1i(U.comp.noiseSoft, 3);
 
     var W = 0, H = 0, HW = 0, HH = 0;
-    var srcTex = null, lutTex = null, noiseTex = null, noiseSoftTex = null, noiseData = null;
+    var srcTex = null, specTex = null, noiseTex = null, noiseSoftTex = null, noiseData = null;
     var colorT = null, colorFbo = null;
     var lensT = null, lensFbo = null;
     var maskA = null, maskAFbo = null;
@@ -413,9 +382,9 @@
     }
 
     function dispose() {
-      [srcTex, lutTex, colorT, lensT, maskA, maskB, maskC].forEach(function (t) { if (t) gl.deleteTexture(t); });
+      [srcTex, specTex, colorT, lensT, maskA, maskB, maskC].forEach(function (t) { if (t) gl.deleteTexture(t); });
       [colorFbo, lensFbo, maskAFbo, maskBFbo, maskCFbo].forEach(function (f) { if (f) gl.deleteFramebuffer(f); });
-      srcTex = lutTex = colorT = lensT = maskA = maskB = maskC = null;
+      srcTex = specTex = colorT = lensT = maskA = maskB = maskC = null;
       colorFbo = lensFbo = maskAFbo = maskBFbo = maskCFbo = null;
     }
 
@@ -441,7 +410,7 @@
       maskC = tex(HW, HH, gl.LINEAR);
       maskCFbo = fbo(maskC);
 
-      lutTex = tex(256, 1, gl.NEAREST);
+      specTex = tex(1, 1, gl.LINEAR);
     }
 
     function draw(target, w, h) {
@@ -451,7 +420,7 @@
     }
 
     function render(srcCanvas, w, h, film, opts) {
-      if (!srcCanvas || !w || !h || !film || !SP.buildLUT) return false;
+      if (!srcCanvas || !w || !h || !film) return false;
       opts = opts || {};
       try {
         ensureSize(w, h);
@@ -462,50 +431,25 @@
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
 
-        /* LUT */
-        var L = SP.buildLUT(film, opts.ev || 0);
-        var data = new Uint8Array(1024);
-        for (var i = 0; i < 256; i++) {
-          if (L.mono) {
-            var v = L.mono[i];
-            data[i * 4] = v;
-            data[i * 4 + 1] = v;
-            data[i * 4 + 2] = v;
-          } else {
-            data[i * 4] = L.lut[i];
-            data[i * 4 + 1] = L.lut[i + 256];
-            data[i * 4 + 2] = L.lut[i + 512];
-          }
-          data[i * 4 + 3] = 255;
-        }
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, lutTex);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+        /* 色彩：spektrafilm 的 3D LUT，以 2D 图集承载 */
+        var spec = opts.spectralLut || null;
+        if (!spec) return false;
 
         /* 1. 色彩到全分辨率纹理 */
         gl.useProgram(colorP);
-        gl.uniform1f(U.color.mono, film.bw ? 1 : 0);
-        gl.uniform1f(U.color.sat, film.bw ? 0 : film.sat);
-        gl.uniform1f(U.color.vib, film.bw ? 0 : film.vibrance);
-        gl.uniform1f(U.color.hiDesat, film.bw ? 0 : (film.highlightDesat != null ? film.highlightDesat : 0.28));
-        var model = SP.colorModel ? SP.colorModel(film) : { matrix: null, hueSat: 0 };
-        var mm = model.matrix || [1, 0, 0, 0, 1, 0, 0, 0, 1];
-        gl.uniform3f(U.color.m0, mm[0], mm[1], mm[2]);
-        gl.uniform3f(U.color.m1, mm[3], mm[4], mm[5]);
-        gl.uniform3f(U.color.m2, mm[6], mm[7], mm[8]);
-        gl.uniform1f(U.color.hueSat, model.hueSat);
-        var hc = (SP.COLOR_MODEL && SP.COLOR_MODEL.hue) || { a1: 0, p1: 0, a2: 0, p2: 0 };
-        gl.uniform1f(U.color.hueA1, hc.a1);
-        gl.uniform1f(U.color.hueP1, hc.p1);
-        gl.uniform1f(U.color.hueA2, hc.a2);
-        gl.uniform1f(U.color.hueP2, hc.p2);
-        gl.uniform3f(U.color.st, film.shadowTint[0], film.shadowTint[1], film.shadowTint[2]);
-        gl.uniform3f(U.color.ht, film.highTint[0], film.highTint[1], film.highTint[2]);
+        gl.uniform1f(U.color.specExp, Math.pow(2, opts.ev || 0));
+        gl.uniform1f(U.color.specSize, spec.size);
+        gl.uniform1f(U.color.specTiles, spec.tiles);
+        gl.uniform1f(U.color.specRows, spec.rows);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, specTex);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, spec.atlasW, spec.atlasH, 0,
+          gl.RGBA, gl.UNSIGNED_BYTE, spec.atlas);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, srcTex);
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, lutTex);
         draw(colorFbo, W, H);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
         /* P2 镜头：柔化 + 横向色差，输出到 lensT；后面所有步骤都读这张 */
         var lens = SP.lensModel ? SP.lensModel(film) : { softness: 0, ca: 0 };
@@ -525,11 +469,11 @@
           colorTex = lensT;
         }
 
-        var wantHalo = !!opts.halation && !!film.halation;
+        var wantHalo = !!opts.halation && !!film.halation && film.halation.amount > 0;
         var wantBloom = !!opts.bloom;
         var wantMask = wantHalo || wantBloom;
-        var bloomAmt = wantBloom ? (film.bloom && film.bloom.amount != null ? film.bloom.amount : (film.bw ? 0.10 : 0.12)) : 0;
-        var bloomCol = film.bloom && film.bloom.color ? film.bloom.color : (film.bw ? [1, 1, 1] : [1, 0.96, 0.90]);
+        var bloomAmt = wantBloom ? (film.bloom && film.bloom.amount != null ? film.bloom.amount : 0.12) : 0;
+        var bloomCol = film.bloom && film.bloom.color ? film.bloom.color : [1, 0.96, 0.90];
         if (wantMask) {
           /* 2. 半分辨率亮部遮罩：halation 和全局 bloom 共用 */
           gl.useProgram(brightP);
@@ -589,14 +533,15 @@
         } else {
           gl.uniform3f(U.comp.haloColor, 0, 0, 0);
         }
-        gl.uniform1f(U.comp.grain, opts.grain ? film.grain.amount * (opts.grainScale || 1) : 0);
-        gl.uniform1f(U.comp.grainShadow, film.grain.shadow || 0);
-        gl.uniform1f(U.comp.grainSize, film.grain.size || 1);
-        gl.uniform1f(U.comp.grainMono, film.bw ? 1 : 0);
+        var grain = film.grain || { amount: 0 };
+        gl.uniform1f(U.comp.grain, opts.grain ? grain.amount * (opts.grainScale || 1) : 0);
+        gl.uniform1f(U.comp.grainShadow, grain.shadow || 0);
+        gl.uniform1f(U.comp.grainSize, grain.size || 1);
+        gl.uniform1f(U.comp.grainMono, 0);
         gl.uniform1f(U.comp.grainCoarseScale,
-          film.grain.coarseScale || (film.iso >= 1600 ? 5 : film.iso >= 800 ? 4 : film.iso >= 400 ? 3 : 2));
+          grain.coarseScale || (film.iso >= 1600 ? 5 : film.iso >= 800 ? 4 : film.iso >= 400 ? 3 : 2));
         gl.uniform1f(U.comp.grainCoarseAmt,
-          film.grain.coarse != null ? film.grain.coarse : (film.iso >= 800 ? 0.55 : film.iso >= 400 ? 0.50 : 0.38));
+          grain.coarse != null ? grain.coarse : (film.iso >= 800 ? 0.55 : film.iso >= 400 ? 0.50 : 0.38));
         var noiseSeed = (opts.seed == null ? 7 : opts.seed) | 0;
         gl.uniform2f(U.comp.noiseOff,
           ((noiseSeed % 512) + 512) % 512,
