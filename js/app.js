@@ -48,6 +48,7 @@
     spectralPaperId: '',
     spectralFilmObj: null,
     spectralLoading: false,
+    spectralError: '',
     spectralLoadPromise: null,
     spectralBakeTimer: 0,
     spectralPendingFilm: '',
@@ -161,8 +162,8 @@
   function ensureSpectralData() {
     if (S.Spektra && S.SPEKTRA_DATA) return Promise.resolve();
     if (state.spectralLoadPromise) return state.spectralLoadPromise;
-    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.21.0')
-      .then(function () { return loadScriptOnce('js/spektra.js?v=1.21.0'); })
+    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.22.0')
+      .then(function () { return loadScriptOnce('js/spektra.js?v=1.22.0'); })
       .then(function () {
         if (!S.Spektra || !S.SPEKTRA_DATA) throw new Error('spectral-data-missing');
         S.Spektra.setData(S.SPEKTRA_DATA);
@@ -183,6 +184,19 @@
     kodak_2383: '2383',
     kodak_2393: '2393'
   };
+  /* 列表重绘会销毁当前按钮；键盘选纸/选卷后仍要留在原卡片上，
+     否则移动抽屉的焦点会掉到 body，下一次 Tab 只能从关闭键重新开始。 */
+  function replaceCardsHtml(list, html) {
+    var active = document.activeElement;
+    var card = active && active.closest ? active.closest('.film-card') : null;
+    var index = card && list.contains(card) ? card.getAttribute('data-index') : null;
+    list.innerHTML = html;
+    if (index === null) return;
+    var next = list.querySelector('.film-card[data-index="' + index + '"] .film-load');
+    if (next) {
+      try { next.focus({ preventScroll: true }); } catch (e) { next.focus(); }
+    }
+  }
   function renderPaperList() {
     if (!el.paperList) return;
     if (!S.Spektra) {
@@ -205,7 +219,7 @@
         '<span class="fc-note">换纸会重新烘焙当前胶卷的 LUT。</span>' +
         '</button></li>';
     });
-    el.paperList.innerHTML = html;
+    replaceCardsHtml(el.paperList, html);
   }
   function setPaper(index) {
     if (!S.Spektra) return;
@@ -230,6 +244,7 @@
       state.spectralPendingFilm = filmId;
       state.spectralPendingPaper = paperId;
       state.spectralFilmObj = S.Spektra.effectsFor(filmId);
+      state.spectralError = '';
       prefs.spectralFilm = filmId;
       prefs.spectralPaper = paperId;
       savePrefs();
@@ -248,6 +263,7 @@
     } catch (e) {
       state.spectralLut = null;
       state.spectralFilmObj = null;
+      state.spectralError = '光谱 LUT 计算失败，请换一组胶卷 / 相纸重试';
       setSpectralStatus('LUT 计算失败 · 请换一组胶卷 / 相纸重试');
       paintCurrentFilm();
       renderFilmList();
@@ -269,6 +285,7 @@
   function loadSpectral() {
     if (state.spectralLoading || activeSpectral()) return;
     state.spectralLoading = true;
+    state.spectralError = '';
     setSpectralStatus('正在载入光谱数据…');
     ensureSpectralData().then(function () {
       var films = S.Spektra.films(), papers = S.Spektra.papers();
@@ -281,7 +298,9 @@
       commitSpectralBake(fid, pid);
     }).catch(function () {
       state.spectralLoading = false;
+      state.spectralError = '光谱数据加载失败，请刷新页面重试';
       setSpectralStatus('光谱数据加载失败 · 请刷新页面重试');
+      paintCurrentFilm();
       toast('光谱数据加载失败，请检查网络后刷新');
     });
   }
@@ -1015,14 +1034,14 @@
     if (n < 1) n = 1;
 
     el.canCode.textContent = f.code;
-    el.canName.textContent = f.name;
+    el.canName.textContent = !f.process && state.spectralError ? '光谱数据未就绪' : f.name;
     if (f.process) {
       el.canMeta.textContent = f.process + ' · ' + (f.positive ? '直接扫描' : spectralPaperShort(state.spectralPaperId));
       el.canMeta.title = f.process + ' · ISO ' + f.iso + ' · ' +
         (f.positive ? '反转片直接扫描，不经过相纸' : spectralPaperName(state.spectralPaperId));
     } else {
-      el.canMeta.textContent = '光谱数据载入中';
-      el.canMeta.title = '';
+      el.canMeta.textContent = state.spectralError || '光谱数据载入中';
+      el.canMeta.title = state.spectralError || '';
     }
     el.canSwatch.style.setProperty('--tone', f.tone);
     el.roCode.textContent = f.code;
@@ -1096,7 +1115,7 @@
         '<span class="fc-note">' + note + '</span>' +
         '</button></li>';
     });
-    el.filmList.innerHTML = html;
+    replaceCardsHtml(el.filmList, html);
     el.filmList.classList.remove('is-dim');
     $('#filmCount').textContent = list.length;
     el.rollKnob.setAttribute('aria-valuemax', Math.max(1, list.length));
@@ -1109,7 +1128,7 @@
 
   function shoot() {
     if (state.busy) return;
-    if (!activeSpectral()) { toast('光谱数据还在载入，请稍等'); return; }
+    if (!activeSpectral()) { toast(state.spectralError || '光谱数据还在载入，请稍等'); return; }
     if (state.rewinding) { toast('正在回卷，等新卷上好再拍'); return; }
     if (!activeSource()) {
       toast('还没有画面：先允许镜头，或导入一张底片');
@@ -1711,8 +1730,13 @@
     scheduleThumbUpgrades();
   }
 
+  var albumRefreshSerial = 0;
   function refreshAlbum() {
+    var serial = ++albumRefreshSerial;
     return Store.all().then(function (rows) {
+      /* 慢存储上的旧读取可能晚于删除/撤销后的新读取返回；只允许最后一次
+         请求重绘，避免已删除照片复活或异步结果被旧快照覆盖。 */
+      if (serial !== albumRefreshSerial) return state.shots;
       paintAlbum(rows);
       /* 存储整体不可用时已经由 onPersistentChange 给过“存储不可用”提示，
          这里不要再把那条更重要的提示覆盖掉；只在存储本身仍可用、
@@ -1768,6 +1792,9 @@
   }
 
   function renderFrames(rows) {
+    var active = document.activeElement;
+    var activeShot = active && active.closest ? active.closest('.shot') : null;
+    var focusId = activeShot && el.frames.contains(activeShot) ? activeShot.getAttribute('data-id') : null;
     releaseUrls();
     el.frames.classList.toggle('is-managing', state.managing);
     var html = '';
@@ -1791,6 +1818,13 @@
         '</button></li>';
     });
     el.frames.innerHTML = html;
+    /* 异步刷新只替换缩略图列表；仍在列表中的焦点卡片不能被销毁后丢到 body。 */
+    if (focusId) {
+      var next = el.frames.querySelector('.shot[data-id="' + focusId + '"] .shot-open');
+      if (next) {
+        try { next.focus({ preventScroll: true }); } catch (e) { next.focus(); }
+      }
+    }
   }
 
   /* ---------- 旧缩略图按需重建 ----------
@@ -2076,7 +2110,8 @@
     paintAlbum(state.shots.filter(function (r) { return !ids[r.id]; }));
     focusAfterBatchDelete();
 
-    /* 和单张删除一样：先复制独立 Blob，再删库；撤销写回副本 */
+    /* 和单张删除一样：先复制独立 Blob，再删库；只把真正删掉的行纳入撤销。
+       读取或删除失败的行必须通过 refreshAlbum 回到列表，不能误报全部成功。 */
     var copiesP = Promise.all(rows.map(function (r) {
       return Store.get(r.id).then(function (full) {
         return full ? copyFrame(full) : null;
@@ -2085,14 +2120,21 @@
       var copies = list.filter(Boolean);
       return Promise.all(copies.map(function (c) {
         return Store.remove(c.id).then(function () { return c; }).catch(function () { return null; });
-      })).then(function () { return copies; });
+      })).then(function (deleted) { return deleted.filter(Boolean); });
     });
-    copiesP.catch(function () { refreshAlbum(); });
-
-    toast('已删除 ' + rows.length + ' 张', '撤销', function () {
-      copiesP.then(function (copies) {
-        return Promise.all(copies.map(function (c) { return Store.add(c); }));
-      }).then(refreshAlbum).catch(function () { toast('撤销失败，请重试'); });
+    copiesP.then(function (copies) {
+      return refreshAlbum().then(function () {
+        if (!copies.length) { toast('删除失败，请重试'); return; }
+        var failed = rows.length - copies.length;
+        toast('已删除 ' + copies.length + ' 张' + (failed ? ' · ' + failed + ' 张失败' : ''), '撤销', function () {
+          copiesP.then(function (deleted) {
+            return Promise.all(deleted.map(function (c) { return Store.add(c); }));
+          }).then(refreshAlbum).catch(function () { toast('撤销失败，请重试'); });
+        });
+      });
+    }).catch(function () {
+      refreshAlbum();
+      toast('删除失败，请重试');
     });
   }
 
@@ -2212,23 +2254,26 @@
     paintAlbum(state.shots.filter(function (r) { return r.id !== row.id; }));
     focusShotAfterDelete(index);
 
-    /* 先复制独立 Blob，再立即从 IndexedDB 删除：
-       关掉页面也不会留下「待删除」记录；撤销时写回副本 */
+    /* 先复制独立 Blob，再从 IndexedDB 删除。只有数据库删除真的成功，
+       才显示“已删除 / 撤销”；失败时恢复列表，不留下一个必然失败的撤销入口。 */
     var undoCopy = copyFrame(row).then(function (copy) {
       return Store.remove(row.id).then(function () { return copy; });
     });
-    undoCopy.catch(function () {
-      var rows = state.shots.slice();
-      rows.push(row);
-      rows.sort(function (a, b) { return b.ts - a.ts; });
-      paintAlbum(rows);
-    });
-
-    toast('已删除 ' + row.code + ' #' + pad2(row.frameNo), '撤销', function () {
-      undoCopy.then(function (copy) {
-        return Store.add(copy);
-      }).then(refreshAlbum).catch(function () {
-        toast('撤销失败，请重试');
+    undoCopy.then(function () {
+      /* 与并发拍摄/其他撤销共用带序号的刷新，落库结果确定后再显示撤销。 */
+      refreshAlbum().then(function () {
+        toast('已删除 ' + row.code + ' #' + pad2(row.frameNo), '撤销', function () {
+          undoCopy.then(function (copy) {
+            return Store.add(copy);
+          }).then(refreshAlbum).catch(function () {
+            toast('撤销失败，请重试');
+          });
+        });
+      });
+    }, function () {
+      /* 不手工把 row 塞回列表：并发刷新可能已经包含它，以数据库实际结果为准。 */
+      refreshAlbum().then(function () {
+        toast('删除失败，请重试');
       });
     });
   }

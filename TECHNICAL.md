@@ -1,6 +1,6 @@
 # SPOOLO 技术文档
 
-> 适用版本：**v1.21.0**
+> 适用版本：**v1.22.0**
 > 面向：准备接手维护、调整色彩、增加乳剂或排查移动端问题的开发者。
 > 建议阅读顺序：`README.md` → 本文第 1～3 节 → `js/spektra.js` → `js/films.js` → `js/gpu-develop.js` → `js/app.js` 的冲印部分。
 
@@ -24,6 +24,7 @@ SPOOLO 是一台纯静态的网页 135 胶片相机。没有构建步骤、没�
 | `js/store.js` | IndexedDB 影集存储（失败降级到内存） |
 | `js/zip.js` | 桌面批量保存用的 store-only ZIP（CRC32，不压缩 JPEG） |
 | `js/app.js` | 取景、快门、定时、闪光、冲印调度、胶卷/相纸/影集/灯箱/批量、交互与无障碍 |
+| `tools/https-server.py` | 本地 HTTPS 静态服务；自动生成临时自签名证书，也可使用已有 PEM 证书 |
 | `TECHNICAL.md` | 本文 |
 | `README.md` | 用户功能、乳剂列表、运行方式、许可说明 |
 | `LICENSE` / `NOTICE` | GPL-3.0 许可全文与项目版权 / 授权声明 |
@@ -66,7 +67,7 @@ films.js → store.js → gpu-develop.js → zip.js → app.js
 
 ### 0.3 设计约束
 
-- **纯静态**：`python -m http.server` 或 GitHub Pages 即可；不要引入打包器、框架或后端。
+- **纯静态**：`python3 -m http.server` 或 GitHub Pages 即可；不要引入打包器、框架或后端。
 - **无第三方运行时依赖**：字体是唯一的外部资源，且失败时必须有回退字体。
 - **色彩是显示参考（display-referred）**：输入与输出都按显示 sRGB 8-bit 处理；光谱链内部会在采样前做 sRGB ↔ 线性转换，但不再有可手调的“胶片感”曲线参数。所有色彩由 spektrafilm 的胶片 / 相纸数据决定，改管线前先接受这个前提。
 - **移动优先**：主要使用场景是手机竖屏；桌面是第二布局。
@@ -180,6 +181,7 @@ SPOOLO.render(pixels, w, h, film, { ev: 0, spectralLut: lut, grain: true, seed: 
 | `spectralFilmId` / `spectralPaperId` | 当前已生效的光谱胶片 / 相纸 id |
 | `spectralFilmObj` | `Spektra.effectsFor()` 返回的「像胶片」对象，供取景、暗角、颗粒、灯箱元数据复用 |
 | `spectralLoading` | 光谱数据是否正在加载 |
+| `spectralError` | 光谱加载 / LUT 失败信息；让快门 Toast、暗房状态和机身显示保持一致 |
 | `spectralBakeTimer` / `spectralPending*` | 换卷/换纸时的防抖烘焙队列 |
 
 ### 2.2 `prefs` 持久化
@@ -686,7 +688,7 @@ b += fa * 0.86;
 3. 重新生成数据：
 
 ```bash
-python tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js
+python3 tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js
 ```
 
 4. 刷新页面；`renderFilmList()` / `renderPaperList()` 会自动按数据数量生成卡片，旋钮的 `aria-valuemax` 也按 `Spektra.films().length` 写。
@@ -782,7 +784,7 @@ S.SPEKTRA_DATA = {
 + 滤色片数据）。重新生成：
 
 ```bash
-python tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js
+python3 tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js
 ```
 
 #### 运行时链路
@@ -877,6 +879,7 @@ LUT 的输入输出都是**显示 sRGB**，所以取景视频 / 导入的 8-bit 
 
 - 单张删除：先把原图/缩略图复制成独立 Blob，再立即从 IndexedDB 删除；Toast 提供 6 秒撤销，撤销写回副本。
 - 批量删除：`window.confirm` 确认；同样先复制 Blob，再删；撤销批量写回。
+- 只有实际删除成功的记录才进入成功提示与撤销集合；读取或删除失败会重新读取实际影集，部分失败显示各自数量。影集异步刷新按序号只让最后一次请求重绘，避免并发拍摄、删除与撤销把旧快照盖回来。
 - 6 秒内关闭页面：删除已经落库，不会在下次打开时“复活”；这是刻意的选择（避免残留待删除记录）。
 - 撤销是单层：新的 Toast 会替换旧的撤销入口。
 
@@ -916,6 +919,7 @@ LUT 的输入输出都是**显示 sRGB**，所以取景视频 / 导入的 8-bit 
   - 打开时聚焦当前标签，关闭后焦点回到触发按钮；
   - `html.overflow = hidden` 锁滚动。
 - 关闭抽屉会调用 `wakePreview()`：恢复 rAF 运行状态、重算画布、重挂/播放视频、必要时重连镜头、检测 WebGL 上下文。
+- 胶卷 / 相纸卡片与影集缩略图重绘时保留仍存在的焦点；异步删除完成后不再次抢占用户已经移动的焦点。
 
 ### 6.3 键盘快捷键
 
@@ -947,11 +951,27 @@ v1.12.5 起，针对“批量删除/确认/分享后回到相机画面卡死”�
 
 ### 7.1 本地运行
 
+桌面快速预览：
+
 ```bash
-python -m http.server 8123
+python3 -m http.server 8123
 ```
 
-访问 `http://localhost:8123/`。摄像头只在 HTTPS 或 localhost 下可用；手机测试必须用 HTTPS（局域网自签证书或 GitHub Pages）。
+访问 `http://localhost:8123/`。`localhost` 是安全上下文；直接用局域网 HTTP 地址测试手机摄像头则会被浏览器拦截。
+
+需要 HTTPS 时：
+
+```bash
+python3 tools/https-server.py
+```
+
+`tools/https-server.py` 只用 Python 标准库提供静态服务，自动调用 OpenSSL 生成 30 天自签名证书。证书、私钥位于独立临时目录，不进入仓库；SAN 包含 `localhost`、`127.0.0.1`、`::1` 和检测到的局域网 IPv4。默认监听 `0.0.0.0:8443`，启动日志会列出本机与局域网 URL。
+
+- 自签名证书首次使用需要浏览器确认；如果镜头仍被限制，需要把证书加入设备信任。
+- 可用 `--cert /path/cert.pem --key /path/key.pem` 使用已有 PEM 证书，避免每次自动启动生成新证书。
+- `--host` / `--port` / `--directory` 可覆盖监听地址、端口和静态目录，完整说明见 `--help`。
+- 默认监听所有网卡会向同一网络暴露仓库静态文件，只在可信网络中启动；`Ctrl+C` 停止。
+- 真机摄像头、系统分享、LED torch 与硬件 GPU 不能由桌面模拟替代，仍需在目标设备上验收。
 
 ### 7.2 强制走不同路径
 
@@ -972,6 +992,8 @@ python -m http.server 8123
   const gl = document.querySelector('#preview').getContext('webgl');
   gl.getExtension('WEBGL_lose_context').loseContext();
   ```
+
+  取景上下文丢失后应退回 2D。成片离屏上下文也要单独测试：`GLDevelop.render()` 在渲染前后检查上下文，并检查 `getError()`；上下文丢失、OOM、FBO 不完整或普通 GL 错误都必须让 `app.js` 回退 CPU，不能把尚未冲印的源画布直接编码成照片。
 
 - **IndexedDB 不可用**：在页面脚本前让 `indexedDB.open` 抛错，应用会走内存兜底并提示“仅本次会话”。
 - **摄像头拒绝/无摄像头**：拒绝权限后应显示“镜头权限被拒绝 / 重试 / 导入底片”，导入后仍可完整拍摄。
@@ -1001,7 +1023,11 @@ python -m http.server 8123
 
 **降级/异常**
 
-- 无 WebGL、上下文丢失、IndexedDB 禁用。
+- 无 WebGL、取景上下文丢失、IndexedDB 禁用。
+- 成片离屏上下文丢失及普通 GL 错误后必须回退 CPU；与直接 CPU 冲印对照，不能把未处理的源画面编码成照片。
+- 注入 IndexedDB `delete` 失败，覆盖单张、批量与部分失败：提示和撤销数量必须准确；删除尚未完成时继续拍摄，最终 UI 与数据库一致且无重复卡片。
+- 阻断 `spektra-data.js` 后，暗房状态、机身信息与快门 Toast 都应显示加载失败；恢复后刷新可拍。
+- 相纸键盘选择、桌面胶卷切换及影集异步刷新要保留焦点；异步删除完成不能抢走用户的新焦点。
 - 摄像头拒绝、轨道 ended、页面切后台再回来。
 - iPhone Safari：保存/分享、删除撤销、批量删除后返回取景不冻帧。
 

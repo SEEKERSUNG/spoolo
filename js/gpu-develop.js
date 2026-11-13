@@ -421,6 +421,11 @@
 
     function render(srcCanvas, w, h, film, opts) {
       if (!srcCanvas || !w || !h || !film) return false;
+      /* 离屏上下文也可能被系统回收；此时 GL 调用静默无效，若仍返回成功，
+         app 会把源画布上尚未冲印的原图直接编码成 JPEG。必须让上层回退 CPU。 */
+      if (gl.isContextLost && gl.isContextLost()) return false;
+      /* 只判断本次渲染的错误；WebGL 的 OOM / FBO 不完整通常不抛异常。 */
+      gl.getError();
       opts = opts || {};
       try {
         ensureSize(w, h);
@@ -564,7 +569,9 @@
         gl.bindTexture(gl.TEXTURE_2D, maskC);
         draw(null, W, H);
 
-        return true;
+        /* 渲染途中也可能丢失上下文；OOM、FBO 不完整等错误只通过
+           getError 报告。任一失败都让 app 从未被修改的源画布回退 CPU。 */
+        return gl.getError() === gl.NO_ERROR && !(gl.isContextLost && gl.isContextLost());
       } catch (e) {
         return false;
       }

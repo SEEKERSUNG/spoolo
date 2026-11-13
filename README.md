@@ -1,6 +1,6 @@
 # SPOOLO · 一台网页里的胶片相机
 
-> **版本 v1.21.0**
+> **版本 v1.22.0**
 > 在线体验：<https://seekersung.github.io/spoolo/>
 > 源码仓库：<https://github.com/SEEKERSUNG/spoolo>
 > 技术文档：[TECHNICAL.md](TECHNICAL.md)
@@ -78,6 +78,7 @@
 - **影集**：IndexedDB 本地存储，灯箱查看底片信息、保存到本地、删除（6 秒内可撤销）。缩略图直接从 720px 成片缩放，颗粒图案与点开后的灯箱成片同源；旧底片打开影集时会在后台按需重建。支持批量管理：多选 / 全选、批量保存（移动端系统分享，桌面打包 ZIP）与批量删除（带撤销）。
 - **导入冲洗**：把本地照片当作底片送进暗房，用任意一卷冲印。支持 JPEG / PNG / WebP / GIF / AVIF；HEIC/HEIF、TIFF、相机 RAW、JPEG XL 需要先导出为 JPEG（浏览器本身不支持解码这些格式），失败时取景窗会给出具体原因和导出建议。
 - **优雅降级**：没有摄像头或未授权时，取景窗上只给「重试 / 导入底片」两个出口，导入一张照片即可走完整的拍摄与冲印流程。
+- **异常恢复**：成片离屏 WebGL 上下文丢失或渲染错误会自动回退 CPU；影集删除按实际落库结果提示，支持部分失败与撤销，异步刷新不会把旧照片或重复卡片带回来。
 - **响应式与无障碍**：桌面为常驻暗房侧栏，窄屏为底部抽屉；空格快门、`G` 网格、`F` 翻转镜头、`T` 定时、`D` 日期、`M` 快门声、`Esc` 关闭面板；胶卷旋钮与 EV 滚轮为 `role="slider"`、开关为 `aria-pressed`，并遵循 `prefers-reduced-motion`。
 
 ## 色彩引擎
@@ -92,14 +93,35 @@
 
 ## 本地运行
 
+### 桌面快速预览（HTTP）
+
 ```bash
-python -m http.server 8123
+python3 -m http.server 8123
 ```
 
-然后访问 <http://localhost:8123/>。
+访问 <http://localhost:8123/>。`localhost` 本身就是安全上下文，桌面测试摄像头不强制要求 HTTPS。
+
+### 手机与局域网摄像头测试（HTTPS）
+
+```bash
+python3 tools/https-server.py
+```
+
+工具只使用 Python 标准库；自动生成证书时需要系统安装 OpenSSL。默认监听 `0.0.0.0:8443`，启动后会打印可访问地址：
+
+- 本机：<https://localhost:8443/>
+- 手机与电脑在同一网络：`https://<局域网IPv4>:8443/`（替换为启动日志中的实际地址）
+
+自动生成的自签名证书有效期 30 天，证书与私钥放在独立临时目录，不进入仓库；每次自动启动都会生成新证书。首次打开需要在浏览器里确认继续访问。如果浏览器仍限制摄像头，请把证书安装并设为受信任证书，或提供已有的 PEM 证书：
+
+```bash
+python3 tools/https-server.py --cert /path/to/cert.pem --key /path/to/key.pem
+```
+
+可用 `python3 tools/https-server.py --help` 查看监听地址、端口和静态目录等选项。默认监听所有网卡会把仓库静态文件暴露给同一网络，请只在可信网络中使用，测试完按 `Ctrl+C` 停止。
 
 > `getUserMedia` 只在 HTTPS 或 `localhost` 下可用。直接双击 `index.html`（`file://`）时多数浏览器会拒绝摄像头权限，此时点取景窗上的「导入底片」选一张照片，即可走通完整的拍片与冲印流程。
-> 手机也一样：用局域网 IP 以 http 打开会被浏览器直接屏蔽镜头，**必须走 HTTPS**（GitHub Pages 的地址天然是 https），进页面后点一下屏幕即会弹出授权。
+> 用局域网 IP 以 HTTP 打开会被浏览器直接屏蔽镜头，必须走 HTTPS（GitHub Pages 的地址天然是 https）；自签名证书还需浏览器的信任确认。
 
 ## 目录结构
 
@@ -116,6 +138,7 @@ js/zip.js           批量保存用的 store-only ZIP 打包
 js/store.js         IndexedDB 底片存储（不可用时降级为内存）
 js/app.js           取景、快门、冲印、胶卷/相纸与影集、导入、音效
 tools/build-spektra-data.py  从上游 profile 生成 js/spektra-data.js
+tools/https-server.py     本地 HTTPS 静态服务器与临时自签名证书
 third_party/spektrafilm/     上游 profile 许可原文
 LICENSE / NOTICE    GPL-3.0 全文与项目版权 / 授权声明
 TECHNICAL.md        技术文档：架构、色彩管线、数据模型、扩展与调试
