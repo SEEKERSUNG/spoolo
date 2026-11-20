@@ -382,11 +382,17 @@ button, input, select { font: inherit; color: inherit; }
   .shell .peek-empty { font-size: 8px; }
 }
 
+/* 中文铭牌比英文宽：小屏隐藏机型说明，让计数器始终留在顶盖边界内。 */
+@media (max-width: 999px) and (orientation: portrait) and (max-width: 480px) {
+  .plate { gap: 8px; }
+  .maker-format { display: none; }
+  .maker-meta { overflow: hidden; text-overflow: ellipsis; }
+}
+
 /* 极窄屏：取景窗读数与机身铭牌收紧，避免折行 */
 @media (max-width: 999px) and (orientation: portrait) and (max-width: 340px) {
   .frame .ro-ev { display: none; }
   .maker-sub { display: none; }
-  .maker-format { display: none; }
   .maker-name { font-size: 14px; }
 }
 
@@ -466,6 +472,7 @@ button, input, select { font: inherit; color: inherit; }
 
 .maker {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -503,6 +510,11 @@ button, input, select { font: inherit; color: inherit; }
   color: oklch(32% 0.10 60);
   border-color: currentColor;
 }
+/* 英文功能键保留单行，避免在 38px 手机导轨里与邻键重叠。 */
+html[lang="en"] .fn-label { font-size: 8px; letter-spacing: 0; gap: 2px; }
+html[lang="en"] .fn-val { font-size: 7px; }
+html[lang="en"] .proc-title { letter-spacing: 0.16em; }
+html[lang="en"] .proc-steps li { font-size: 10px; }
 /* 桌面端署名仍在暗房侧栏底部，避免重复 */
 @media (min-width: 1000px) {
   .maker-meta { display: none; }
@@ -510,6 +522,7 @@ button, input, select { font: inherit; color: inherit; }
 
 /* 计数窗：琥珀色 LED */
 .counter {
+  flex: none;
   display: grid;
   grid-template-columns: auto auto;
   align-items: baseline;

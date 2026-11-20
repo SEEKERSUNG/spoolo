@@ -106,6 +106,57 @@
 .rewind.spinning .rewind-cap { animation: spin 900ms linear 2; }
 @keyframes spin { to { transform: rotate(720deg); } }
 
+/* 顶盖语言键：与回卷旋钮同材质的圆形金属按钮，桌面/手机共用。 */
+.plate .lang-switch {
+  position: relative;
+  align-self: flex-start;
+  flex: 0 0 40px;
+  margin-top: 2px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 200deg,
+    var(--chrome-1), var(--chrome-3) 22%, var(--chrome-2) 48%, var(--chrome-4) 74%, var(--chrome-1));
+  color: oklch(35% 0.018 70);
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.03em;
+  text-shadow: 0 1px 0 oklch(100% 0 0 / 0.5);
+  box-shadow:
+    inset 0 0 0 1px oklch(100% 0 0 / 0.55),
+    inset 0 -4px 8px oklch(0% 0 0 / 0.4),
+    inset 0 3px 6px oklch(100% 0 0 / 0.35),
+    0 3px 7px -3px oklch(0% 0 0 / 0.75);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 120ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+.plate .lang-switch::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px oklch(0% 0 0 / 0.18), inset 0 1px 2px oklch(100% 0 0 / 0.28);
+  pointer-events: none;
+}
+.plate .lang-switch:hover {
+  box-shadow:
+    inset 0 0 0 1px oklch(100% 0 0 / 0.75),
+    inset 0 -4px 8px oklch(0% 0 0 / 0.35),
+    inset 0 3px 6px oklch(100% 0 0 / 0.4),
+    0 4px 10px -3px oklch(0% 0 0 / 0.85);
+}
+.plate .lang-switch:active { transform: translateY(1px); }
+@media (max-width: 340px) {
+  .plate .lang-switch { flex-basis: 36px; width: 36px; height: 36px; margin-top: 4px; font-size: 9px; }
+}
+@media (max-width: 999px) and (orientation: landscape) and (max-height: 720px) {
+  .plate .lang-switch { margin-top: -2px; }
+}
+
 /* ---------- 胶卷标签（暗房纸） ---------- */
 .canister {
   position: relative;
@@ -881,6 +932,7 @@
   color: var(--txt-3);
 }
 .lab-foot b { font-weight: 600; color: var(--txt-2); }
+.lab-foot em { font-style: normal; }
 .lab-foot span { margin: 0 6px; color: oklch(100% 0 0 / 0.22); }
 .lab-foot a {
   color: var(--txt-3);
@@ -1277,6 +1329,8 @@
     margin: auto;
     width: min(232px, calc(100% - 28px));
     height: max-content;
+    max-height: calc(100% - 20px);
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1301,11 +1355,33 @@
     color: var(--amber);
   }
   .frame .vf-notice[data-kind="empty"] #vfNoticeText {
-    flex: none;
+    flex: 0 1 auto;
+    width: 100%;
+    min-height: 0;
     font-size: 11.5px;
     line-height: 1.5;
     color: var(--txt-2);
-    overflow: visible;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: oklch(100% 0 0 / 0.25) transparent;
   }
   .frame .vf-notice[data-kind="empty"] .vf-notice-actions { justify-content: center; }
+}
+
+/* 320px 竖屏的取景器夹在两条功能导轨之间：压缩空状态，正文滚动而出口始终可见。 */
+@media (max-width: 340px) and (orientation: portrait) {
+  .frame .vf-notice[data-kind="empty"] {
+    gap: 8px;
+    padding: 12px 10px 10px;
+  }
+  .frame .vf-notice[data-kind="empty"] .vf-notice-icon {
+    width: 32px;
+    height: 32px;
+    flex: none;
+  }
+  .frame .vf-notice[data-kind="empty"] .link {
+    min-height: 30px;
+    padding: 0 7px;
+    font-size: 10px;
+  }
 }

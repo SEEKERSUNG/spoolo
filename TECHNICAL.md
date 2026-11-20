@@ -1,6 +1,6 @@
 # SPOOLO 技术文档
 
-> 适用版本：**v1.22.0**
+> 适用版本：**v1.24.2**
 > 面向：准备接手维护、调整色彩、增加乳剂或排查移动端问题的开发者。
 > 建议阅读顺序：`README.md` → 本文第 1～3 节 → `js/spektra.js` → `js/films.js` → `js/gpu-develop.js` → `js/app.js` 的冲印部分。
 
@@ -24,16 +24,18 @@ SPOOLO 是一台纯静态的网页 135 胶片相机。没有构建步骤、没�
 | `js/store.js` | IndexedDB 影集存储（失败降级到内存） |
 | `js/zip.js` | 桌面批量保存用的 store-only ZIP（CRC32，不压缩 JPEG） |
 | `js/app.js` | 取景、快门、定时、闪光、冲印调度、胶卷/相纸/影集/灯箱/批量、交互与无障碍 |
+| `js/i18n.js` | 中英文字典、静态 DOM 翻译、动态数量短语与语言按钮状态；暴露 `SPOOLO.I18N` |
 | `tools/https-server.py` | 本地 HTTPS 静态服务；自动生成临时自签名证书，也可使用已有 PEM 证书 |
 | `TECHNICAL.md` | 本文 |
 | `README.md` | 用户功能、乳剂列表、运行方式、许可说明 |
+| `README.en.md` | 英文用户文档；与中文 README 同步维护，顶部提供双语切换链接 |
 | `LICENSE` / `NOTICE` | GPL-3.0 许可全文与项目版权 / 授权声明 |
 | `THIRD_PARTY.md` | spektrafilm 代码与 profile 数据的署名、修改记录与许可义务 |
 
 脚本加载顺序是固定的（见 `index.html` 底部）：
 
 ```
-films.js → store.js → gpu-develop.js → zip.js → app.js
+i18n.js → films.js → store.js → gpu-develop.js → zip.js → app.js
 ```
 
 `spektra-data.js` 与 `spektra.js` 不在首屏 HTML 里：`app.js` 启动后按顺序
@@ -120,6 +122,7 @@ films.js → store.js → gpu-develop.js → zip.js → app.js
 
 ```js
 window.SPOOLO = {
+  I18N,                               // i18n.js
   render, lensModel, LENS_MODEL,      // films.js
   Spektra, SPEKTRA_DATA,              // spektra.js / spektra-data.js
   GLDevelop,                          // gpu-develop.js
@@ -142,14 +145,15 @@ SPOOLO.render(pixels, w, h, film, { ev: 0, spectralLut: lut, grain: true, seed: 
 
 `app.js` 的 `init()` 做这些事：
 
-1. `renderFilmList()`：先写入载入占位；光谱数据到达后生成 20 张乳剂卡，写入旋钮的 `aria-valuemax`。
-2. 恢复网格/日期/声音/颗粒/定时/闪光/EV/卷号/张号。
-3. `bindControls()`：所有事件。
-4. `setTimeout(loadSpectral, 0)`：注入光谱脚本、校验上次胶片 / 相纸 id、烘焙当前 LUT。
-5. `refreshAlbum()`：异步读取 IndexedDB。
-6. `layoutPreview()`：量取景框、设画布尺寸。
-7. `requestAnimationFrame(loop)`：30fps 预览循环。
-8. `startCamera('environment')`：请求摄像头；失败时挂“碰一下页面就重试”的监听。
+1. `I18N.setLanguage(prefs.lang)`：在任何动态渲染前恢复语言，更新 `<html lang>`、标题、静态文本与 ARIA。
+2. `renderFilmList()`：先写入载入占位；光谱数据到达后生成 20 张乳剂卡，写入旋钮的 `aria-valuemax`。
+3. 恢复网格/日期/声音/颗粒/定时/闪光/EV/卷号/张号。
+4. `bindControls()`：所有事件。
+5. `setTimeout(loadSpectral, 0)`：注入光谱脚本、校验上次胶片 / 相纸 id、烘焙当前 LUT。
+6. `refreshAlbum()`：异步读取 IndexedDB。
+7. `layoutPreview()`：量取景框、设画布尺寸。
+8. `requestAnimationFrame(loop)`：30fps 预览循环。
+9. `startCamera('environment')`：请求摄像头；失败时挂“碰一下页面就重试”的监听。
 
 字体加载完成后和 `window.load` 时会再次 `layoutPreview()`，避免首屏布局未稳定时把画布比例量错。
 
@@ -182,6 +186,7 @@ SPOOLO.render(pixels, w, h, film, { ev: 0, spectralLut: lut, grain: true, seed: 
 | `spectralFilmObj` | `Spektra.effectsFor()` 返回的「像胶片」对象，供取景、暗角、颗粒、灯箱元数据复用 |
 | `spectralLoading` | 光谱数据是否正在加载 |
 | `spectralError` | 光谱加载 / LUT 失败信息；让快门 Toast、暗房状态和机身显示保持一致 |
+| `spectralStatus` / `noticeText` / `procTitle` / `procNote` | 当前状态的中文翻译 key；切换语言时据此重绘，不把旧语言留在可见区域 |
 | `spectralBakeTimer` / `spectralPending*` | 换卷/换纸时的防抖烘焙队列 |
 
 ### 2.2 `prefs` 持久化
@@ -199,6 +204,7 @@ SPOOLO.render(pixels, w, h, film, { ev: 0, spectralLut: lut, grain: true, seed: 
 | `date` | `false` | 日期打印 |
 | `sound` | `true` | 合成快门声 |
 | `grain` | `true` | 冲印时是否叠加颗粒 |
+| `lang` | `zh-CN` | 界面语言：`zh-CN` / `en`；其他或旧版缺省值规范为简体中文 |
 | `spectralFilm` | `kodak_portra_400` | 光谱胶片 id |
 | `spectralPaper` | `kodak_portra_endura` | 光谱相纸 id |
 
@@ -935,7 +941,17 @@ LUT 的输入输出都是**显示 sRGB**，所以取景视频 / 导入的 8-bit 
 - 批量保存/删除按钮在未选中时禁用；删除有确认和 6 秒撤销。
 - 当前管理状态、选中集合都在 `state`；切换标签或关闭抽屉不会丢。
 
-### 6.5 iOS 取景恢复
+### 6.5 中英双语
+
+- `js/i18n.js` 以中文原文作为稳定翻译 key；精确字典处理固定文案，完整正则模板处理数量、单复数和英语语序，避免逐词拼接。
+- 静态文本通过 `data-i18n`、`data-i18n-html`、`data-i18n-aria-label` 和 `data-i18n-aria-valuetext` 定点更新，不替换整页 DOM，也不销毁焦点或事件监听。
+- 顶盖左上角、回卷按钮右侧有唯一的 `[data-lang-switch]` 金属圆形按钮，桌面与手机共用；可见短标签是目标语言，完整 `aria-label/title` 说明动作。按钮圆心与回卷旋钮圆心对齐；≤480px 竖屏隐藏较长机型说明、收紧间距，计数器不随弹性布局压缩或越过顶盖边界。
+- `app.js` 内所有状态仍保存中文 key；`showNotice()`、`setSpectralStatus()`、`toast()` 和动态列表在输出时翻译。切换后 `applyLocalizedState()` 重画机身、胶卷/相纸、影集、灯箱和当前临时提示，再调用 `layoutPreview()`。
+- Toast 的原始消息、动作标签和回调分别保存；翻译只改展示，不会让撤销/保存动作失效。灯箱使用已存照片元数据，中文“直接扫描”等旧值也在展示层翻译，不做数据库迁移。
+- 默认语言为 `zh-CN`，`prefs.lang` 持久化；切换不重载页面。照片上已经烧录的日期像素保持不变，灯箱时间继续使用语言无关的 `YYYY-MM-DD HH:mm`。
+- 英文功能键和冲印步骤使用短文案；320px 竖屏仍需检查横向溢出，长导入错误在取景器空状态内滚动。
+
+### 6.6 iOS 取景恢复
 
 v1.12.5 起，针对“批量删除/确认/分享后回到相机画面卡死”增加了多层恢复：
 
@@ -1021,12 +1037,21 @@ python3 tools/https-server.py
 - 旧底片缩略图自动迁移，刷新后保持。
 - 设备 DPR3 下影集预览与灯箱颗粒图案同源。
 
+**中英双语**
+
+- 默认简体中文；通过顶盖回卷旁的金属按钮切换英文，刷新后保持；非法 `prefs.lang` 回退中文。
+- 切换时 `<html lang>`、标题、meta description、静态/动态 ARIA、机身、胶卷/相纸和光谱状态一起更新。
+- 英文完成导入、拍摄、灯箱、单张/批量删除与撤销；切换现存 Toast 后原撤销回调仍可用。
+- 镜头错误、导入解码错误、影集数量、批量选择、冲印状态使用完整英文语序与正确单复数；可见区域除语言目标“简”外不残留中文。
+- Selenium + Firefox 使用 BiDi `browsingContext.setViewport` 覆盖真实 320×568、375×667、390×844 与 667×375 视口；桌面窗口最小宽度不能冒充手机视口。
+
 **降级/异常**
 
 - 无 WebGL、取景上下文丢失、IndexedDB 禁用。
 - 成片离屏上下文丢失及普通 GL 错误后必须回退 CPU；与直接 CPU 冲印对照，不能把未处理的源画面编码成照片。
 - 注入 IndexedDB `delete` 失败，覆盖单张、批量与部分失败：提示和撤销数量必须准确；删除尚未完成时继续拍摄，最终 UI 与数据库一致且无重复卡片。
 - 阻断 `spektra-data.js` 后，暗房状态、机身信息与快门 Toast 都应显示加载失败；恢复后刷新可拍。
+- 空 MIME / `application/octet-stream` 的有效 PNG 应按扩展名正常导入；同条件下的 HEIC、RAW 应进入对应的双语格式错误，而不是统一提示“请选择一张图片”。
 - 相纸键盘选择、桌面胶卷切换及影集异步刷新要保留焦点；异步删除完成不能抢走用户的新焦点。
 - 摄像头拒绝、轨道 ended、页面切后台再回来。
 - iPhone Safari：保存/分享、删除撤销、批量删除后返回取景不冻帧。
@@ -1047,7 +1072,8 @@ python3 tools/https-server.py
 - 版本号同时出现在：
   - 顶盖铭牌（`index.html` 的 `.maker-meta`）
   - 暗房页脚（`.lab-foot`）
-  - `README.md` 头部
+  - `README.md` / `README.en.md` 头部
+  - `TECHNICAL.md` 适用版本
   - 所有 CSS/JS 的 `?v=` 指纹（包括 `app.js` 里动态注入的 `js/spektra*.js`）
 - 发布：提交到特性分支 → 测试 → 快进合并 `main` → 推送；GitHub Pages 从 `main` 根目录发布。
 - 改动色彩/乳剂时，至少更新 README 的乳剂表；新增/修改管线时同步更新本文第 4 节。
@@ -1067,7 +1093,7 @@ python3 tools/https-server.py
 - **颗粒是成片分辨率的像素级效果**：1px 细粒 + 2–5px 低频团块在成片分辨率上生成；缩略图直接缩放，尺寸小的时候看起来更细。高感卷的团块更明显，但在纯灰场上仍会比真实胶片更均匀。
 - **日期是冲印时系统时间**：不是快门时间的独立快照；跨午夜可能差一天。
 - **成片长边上限 1920**；导入小图不放大。
-- **导入格式受浏览器解码能力限制**：JPEG / PNG / WebP / GIF / AVIF 可用；HEIC/HEIF、TIFF、相机 RAW、JPEG XL 在多数桌面浏览器里无法解码，需先导出 JPEG。手机相册的“兼容性最佳”或分享时选择 JPEG 可以避免 HEIC。导入优先使用 `blob:` URL，大图不必先转成几十 MB 的 base64。
+- **导入格式受浏览器解码能力限制**：JPEG / PNG / WebP / GIF / AVIF 可用；HEIC/HEIF、TIFF、相机 RAW、JPEG XL 在多数桌面浏览器里无法解码，需先导出 JPEG。手机相册的“兼容性最佳”或分享时选择 JPEG 可以避免 HEIC。MIME 为空或为 `application/octet-stream` 时，`onFile()` 按明确的图片扩展名补识别，随后仍由真实解码结果决定成功或显示 `importHint()` 的格式专属错误。导入优先使用 `blob:` URL，大图不必先转成几十 MB 的 base64。
 - **iPhone 不能网页控制 LED 闪光灯**；回退为屏幕补光。后摄的屏幕在手机背面，无法照亮前方，软件只能延长补光、重试并最多补回 4EV；真正夜拍后摄需要硬件闪光灯或外部光源。
 - **iOS 摄像头/视频/WebGL 会被系统挂起或回收**；代码有恢复路径，但仍建议真机回归。
 - **IndexedDB 失败会退化为内存**；关页后这些照片会丢，提示只在当次会话。

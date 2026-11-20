@@ -6,6 +6,8 @@
 
   var S = window.SPOOLO;
   var Store = S.Store;
+  var I18N = S.I18N;
+  var t = I18N.t;
   var gpuDevelop = null;
   try { gpuDevelop = S.GLDevelop ? S.GLDevelop() : null; } catch (e) { gpuDevelop = null; }
   var FRAMES_PER_ROLL = 36;
@@ -52,7 +54,12 @@
     spectralLoadPromise: null,
     spectralBakeTimer: 0,
     spectralPendingFilm: '',
-    spectralPendingPaper: ''
+    spectralPendingPaper: '',
+    /* 始终保留中文翻译 key，切换语言时重画当前临时状态 */
+    spectralStatus: '正在载入…',
+    noticeText: '',
+    procTitle: '',
+    procNote: ''
   };
 
   var prefs = loadPrefs();
@@ -84,6 +91,7 @@
     p.date = !!p.date;
     p.sound = !!p.sound;
     p.grain = p.grain === undefined ? true : !!p.grain;
+    p.lang = p.lang === 'en' ? 'en' : 'zh-CN';
     if (typeof p.spectralFilm !== 'string' || !p.spectralFilm) p.spectralFilm = 'kodak_portra_400';
     if (typeof p.spectralPaper !== 'string' || !p.spectralPaper) p.spectralPaper = 'kodak_portra_endura';
     return p;
@@ -92,7 +100,7 @@
   function loadPrefs() {
     var d = {
       ev: 0, grid: true, date: false, sound: true, grain: true, timer: 0, flash: 0, roll: 1, frame: 1,
-      spectralFilm: 'kodak_portra_400', spectralPaper: 'kodak_portra_endura'
+      lang: 'zh-CN', spectralFilm: 'kodak_portra_400', spectralPaper: 'kodak_portra_endura'
     };
     try {
       var raw = localStorage.getItem(PREFS_KEY);
@@ -147,7 +155,8 @@
     return id;
   }
   function setSpectralStatus(text) {
-    if (el.spectraStatus) el.spectraStatus.textContent = text;
+    state.spectralStatus = text;
+    if (el.spectraStatus) el.spectraStatus.textContent = t(text);
   }
   function loadScriptOnce(src) {
     return new Promise(function (resolve, reject) {
@@ -162,8 +171,8 @@
   function ensureSpectralData() {
     if (S.Spektra && S.SPEKTRA_DATA) return Promise.resolve();
     if (state.spectralLoadPromise) return state.spectralLoadPromise;
-    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.22.0')
-      .then(function () { return loadScriptOnce('js/spektra.js?v=1.22.0'); })
+    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.24.2')
+      .then(function () { return loadScriptOnce('js/spektra.js?v=1.24.2'); })
       .then(function () {
         if (!S.Spektra || !S.SPEKTRA_DATA) throw new Error('spectral-data-missing');
         S.Spektra.setData(S.SPEKTRA_DATA);
@@ -200,7 +209,7 @@
   function renderPaperList() {
     if (!el.paperList) return;
     if (!S.Spektra) {
-      el.paperList.innerHTML = '<li class="panel-note">正在载入相纸…</li>';
+      el.paperList.innerHTML = '<li class="panel-note">' + t('正在载入相纸…') + '</li>';
       return;
     }
     var list = S.Spektra.papers();
@@ -213,10 +222,10 @@
         '<li class="film-card' + (on ? ' is-active' : '') + '" data-index="' + i + '">' +
         '<button class="film-load" type="button" aria-pressed="' + on + '">' +
         '<span class="fc-swatch" style="--tone:#d8cbb6"></span>' +
-        '<span class="fc-head"><span class="fc-code">' + code + '</span><span class="fc-badge">使用中</span></span>' +
+        '<span class="fc-head"><span class="fc-code">' + code + '</span><span class="fc-badge">' + t('使用中') + '</span></span>' +
         '<span class="fc-name">' + p.name + '</span>' +
-        '<span class="fc-en">' + (p.kind || '彩色相纸') + ' · ' + (p.type === 'positive' ? '正像' : '负像') + ' · D50 观察光</span>' +
-        '<span class="fc-note">换纸会重新烘焙当前胶卷的 LUT。</span>' +
+        '<span class="fc-en">' + t(p.kind || '彩色相纸') + ' · ' + t(p.type === 'positive' ? '正像' : '负像') + ' · ' + t('D50 观察光') + '</span>' +
+        '<span class="fc-note">' + t('换纸会重新烘焙当前胶卷的 LUT。') + '</span>' +
         '</button></li>';
     });
     replaceCardsHtml(el.paperList, html);
@@ -957,7 +966,7 @@
     if (/tiff?/.test(type) || /\.(tif|tiff)$/.test(name)) {
       return '浏览器不支持 TIFF。请先导出为 JPEG 或 PNG，也可以重试镜头。';
     }
-    if (/(raw|dng|cr2|cr3|nef|arw|raf|orf|rw2)/.test(type) || /\.(dng|cr2|cr3|nef|arw|raf|orf|rw2)$/.test(name)) {
+    if (/(raw|dng|cr2|cr3|nef|arw|raf|orf|rw2)/.test(type) || /\.(raw|dng|cr2|cr3|nef|arw|raf|orf|rw2)$/.test(name)) {
       return '浏览器不支持相机 RAW。请先在相机或修图软件里导出 JPEG，也可以重试镜头。';
     }
     if (/jxl/.test(type) || /\.jxl$/.test(name)) {
@@ -1005,12 +1014,14 @@
   }
 
   function showNotice(text, kind) {
-    el.noticeText.textContent = text;
+    state.noticeText = text;
+    el.noticeText.textContent = t(text);
     el.notice.dataset.kind = kind || 'info';
     el.notice.hidden = false;
   }
   function hideNotice() {
     el.notice.hidden = true;
+    state.noticeText = '';
     delete el.notice.dataset.kind;
   }
 
@@ -1034,21 +1045,21 @@
     if (n < 1) n = 1;
 
     el.canCode.textContent = f.code;
-    el.canName.textContent = !f.process && state.spectralError ? '光谱数据未就绪' : f.name;
+    el.canName.textContent = t(!f.process && state.spectralError ? '光谱数据未就绪' : f.name);
     if (f.process) {
-      el.canMeta.textContent = f.process + ' · ' + (f.positive ? '直接扫描' : spectralPaperShort(state.spectralPaperId));
+      el.canMeta.textContent = f.process + ' · ' + t(f.positive ? '直接扫描' : spectralPaperShort(state.spectralPaperId));
       el.canMeta.title = f.process + ' · ISO ' + f.iso + ' · ' +
-        (f.positive ? '反转片直接扫描，不经过相纸' : spectralPaperName(state.spectralPaperId));
+        t(f.positive ? '反转片直接扫描，不经过相纸' : spectralPaperName(state.spectralPaperId));
     } else {
-      el.canMeta.textContent = state.spectralError || '光谱数据载入中';
-      el.canMeta.title = state.spectralError || '';
+      el.canMeta.textContent = t(state.spectralError || '光谱数据载入中');
+      el.canMeta.title = t(state.spectralError || '');
     }
     el.canSwatch.style.setProperty('--tone', f.tone);
     el.roCode.textContent = f.code;
     el.roIso.textContent = f.iso || '—';
     el.rollKnob.setAttribute('aria-valuenow', i + 1);
     el.rollKnob.setAttribute('aria-valuemax', n);
-    el.rollKnob.setAttribute('aria-valuetext', f.code + ' ' + f.name);
+    el.rollKnob.setAttribute('aria-valuetext', f.code + ' ' + t(f.name));
     el.rollKnob.style.setProperty('--rot', (i * 360 / n) + 'deg');
     applyFilmVars(f);
     updateEdgeCode();
@@ -1083,12 +1094,12 @@
   }
 
   function meter(label, v) {
-    return '<span class="meter"><b>' + label + '</b><i style="--v:' + v + '"></i></span>';
+    return '<span class="meter"><b>' + t(label) + '</b><i style="--v:' + v + '"></i></span>';
   }
 
   function renderFilmList() {
     if (!S.Spektra) {
-      el.filmList.innerHTML = '<li class="panel-note">正在载入光谱胶卷…</li>';
+      el.filmList.innerHTML = '<li class="panel-note">' + t('正在载入光谱胶卷…') + '</li>';
       $('#filmCount').textContent = '0';
       return;
     }
@@ -1102,13 +1113,14 @@
       var gm = Math.max(1, Math.min(5, Math.round((e.grain.amount / 0.13) * 4) + 1));
       var hm = e.halation ? Math.max(1, Math.min(5, Math.round((e.halation.amount / 0.44) * 4) + 1)) : 1;
       var typeLabel = f.type === 'positive' ? '反转片' : '负片';
-      var note = typeLabel + ' · ' + (f.iso >= 800 ? '高感乳剂' : f.iso <= 100 ? '细粒乳剂' : '中速乳剂') +
-        ' · 光谱显影 + 相纸扩印';
+      var speedLabel = f.iso >= 800 ? '高感乳剂' : f.iso <= 100 ? '细粒乳剂' : '中速乳剂';
+      var chainLabel = f.type === 'positive' ? '光谱显影 + 直接扫描' : '光谱显影 + 相纸扩印';
+      var note = t(typeLabel) + ' · ' + t(speedLabel) + ' · ' + t(chainLabel);
       html +=
         '<li class="film-card' + (on ? ' is-active' : '') + '" data-index="' + i + '">' +
         '<button class="film-load" type="button" aria-pressed="' + on + '">' +
         '<span class="fc-swatch" style="--tone:' + e.tone + '"></span>' +
-        '<span class="fc-head"><span class="fc-code">' + e.code + '</span><span class="fc-badge">使用中</span></span>' +
+        '<span class="fc-head"><span class="fc-code">' + e.code + '</span><span class="fc-badge">' + t('使用中') + '</span></span>' +
         '<span class="fc-name">' + e.name + '</span>' +
         '<span class="fc-en">' + (e.en ? e.en + ' · ' : '') + e.process + ' · ISO ' + e.iso + '</span>' +
         '<span class="fc-bars">' + meter('颗粒', gm) + meter('光晕', hm) + '</span>' +
@@ -1647,8 +1659,10 @@
 
     /* 先取消 hidden，再更新文案：读屏的 live region 才能捕获到这次内容变化 */
     el.processing.hidden = false;
-    el.procTitle.textContent = film.process + ' 冲印中';
-    el.procNote.textContent = '按「' + film.code + '」的光谱曲线还原色彩…';
+    state.procTitle = film.process + ' 冲印中';
+    state.procNote = '按「' + film.code + '」的光谱曲线还原色彩…';
+    el.procTitle.textContent = t(state.procTitle);
+    el.procNote.textContent = t(state.procNote);
     bar.style.width = '0';
     steps.forEach(function (s) { s.className = ''; });
     /* 冲印是全局模态：若暗房抽屉还开着，先收起，避免两套 inert/焦点状态互相覆盖 */
@@ -1666,17 +1680,18 @@
 
     return new Promise(function (resolve, reject) {
       function tick() {
-        var t = Math.min(1, (performance.now() - t0) / dur);
-        bar.style.width = (t * 100) + '%';
-        var si = Math.min(3, Math.floor(t * 4));
+        var progress = Math.min(1, (performance.now() - t0) / dur);
+        bar.style.width = (progress * 100) + '%';
+        var si = Math.min(3, Math.floor(progress * 4));
         steps.forEach(function (s, i) {
           s.className = i < si ? 'done' : i === si ? 'on' : '';
         });
-        if (t < 1) { requestAnimationFrame(tick); return; }
+        if (progress < 1) { requestAnimationFrame(tick); return; }
         var wait = function () {
           if (!settled) { setTimeout(wait, 60); return; }
           steps.forEach(function (s) { s.className = 'done'; });
-          el.procNote.textContent = '冲洗完成，正在挂起晾干';
+          state.procNote = '冲洗完成，正在挂起晾干';
+          el.procNote.textContent = t(state.procNote);
           setTimeout(function () {
             el.processing.hidden = true;
             bar.style.width = '0';
@@ -1710,14 +1725,14 @@
     $('#albumBadge').textContent = String(rows.length);
     el.negatives.hidden = rows.length > 0;
     if (!rows.length) {
-      el.albumStat.textContent = '还没有冲洗出照片';
+      el.albumStat.textContent = t('还没有冲洗出照片');
     } else {
       /* 按实际出现过的卷号统计：手动回卷后卷号可能不连续，不能再用 max−min+1 */
       var rolls = 0, seenRolls = {};
       rows.forEach(function (r) {
         if (!seenRolls[r.roll]) { seenRolls[r.roll] = 1; rolls += 1; }
       });
-      el.albumStat.textContent = '共 ' + rows.length + ' 张 · ' + rolls + ' 卷';
+      el.albumStat.textContent = t('共 ' + rows.length + ' 张 · ' + rolls + ' 卷');
     }
     if (rows.length) {
       setPeek(rows[0]);
@@ -1743,7 +1758,7 @@
          但这次列表读取异常时提示。 */
       if (Store.lastListFailed && Store.persistent) {
         if (!rows.length) {
-          el.albumStat.textContent = '存储读取失败 · 刷新重试';
+          el.albumStat.textContent = t('存储读取失败 · 刷新重试');
           toast('存储读取失败，请刷新重试');
         } else {
           toast('存储读取异常，已使用备用读取');
@@ -1802,7 +1817,7 @@
       var thumb = url(r.thumb);
       var ratio = r.w && r.h ? r.w + '/' + r.h : '3/2';
       var sel = !!state.selected[r.id];
-      var label = (state.managing ? '选择第 ' : '查看第 ') + pad2(r.frameNo || 1) + ' 张，' + r.code;
+      var label = t((state.managing ? '选择第 ' : '查看第 ') + pad2(r.frameNo || 1) + ' 张，' + r.code);
       html +=
         '<li class="shot' + (sel ? ' is-selected' : '') + '" data-id="' + r.id + '">' +
         '<button class="shot-open" type="button" aria-label="' + label + '"' +
@@ -1924,16 +1939,16 @@
   function updateBatchUi() {
     var n = selectedIds().length;
     var total = state.shots.length;
-    if (el.batchCount) el.batchCount.textContent = '已选 ' + n + ' 张';
+    if (el.batchCount) el.batchCount.textContent = t('已选 ' + n + ' 张');
     if (el.batchSave) el.batchSave.disabled = n === 0;
     if (el.batchDelete) el.batchDelete.disabled = n === 0;
     if (el.batchAll) {
-      el.batchAll.textContent = total > 0 && n === total ? '取消全选' : '全选';
+      el.batchAll.textContent = t(total > 0 && n === total ? '取消全选' : '全选');
       el.batchAll.disabled = total === 0;
     }
     if (el.albumBatch) el.albumBatch.hidden = !state.managing;
     if (el.albumManage) {
-      el.albumManage.textContent = state.managing ? '完成' : '管理';
+      el.albumManage.textContent = t(state.managing ? '完成' : '管理');
       el.albumManage.setAttribute('aria-pressed', state.managing ? 'true' : 'false');
     }
   }
@@ -2099,7 +2114,7 @@
   function batchDelete() {
     var rows = selectedRows();
     if (!rows.length) return;
-    var ok = window.confirm('删除所选的 ' + rows.length + ' 张底片？');
+    var ok = window.confirm(t('删除所选的 ' + rows.length + ' 张底片？'));
     /* confirm 可能让 iOS 暂停 video，取消或确认后都要把相机唤醒 */
     wakePreview();
     if (!ok) return;
@@ -2150,6 +2165,35 @@
   }
 
   var lbToken = 0;
+  function paintLightbox(row) {
+    el.lbImage.src = url(row.blob);
+    el.lbCode.textContent = row.code;
+    var lbEn = row.en ? String(row.en) : '';
+    var lbName = String(row.name || '');
+    if (lbEn) {
+      var nLower = lbName.toLowerCase(), eLower = lbEn.toLowerCase();
+      if (eLower === nLower || nLower.indexOf(eLower) >= 0 || eLower.indexOf(nLower) >= 0) lbEn = '';
+    }
+    el.lbName.textContent = t(lbName) + (lbEn ? ' · ' + t(lbEn) : '');
+    var d = new Date(row.ts || Date.now());
+    var evText = typeof row.ev === 'number' ? fmtEv(row.ev) : '0.0';
+    var spectralName = row.spectralFilmName || row.code;
+    var spectralPaper = row.spectralPaperName || '';
+    el.lbMeta.innerHTML =
+      '<dt>' + t('卷 / 张') + '</dt><dd>ROLL ' + pad2(row.roll || 1) + ' · #' + pad2(row.frameNo || 1) + '</dd>' +
+      '<dt>' + t('乳剂') + '</dt><dd>' + row.code + ' · ISO ' + row.iso + '</dd>' +
+      (row.spectral
+        ? '<dt>' + t('光谱模拟') + '</dt><dd>' + t(spectralName) +
+          (spectralPaper ? ' · ' + t(spectralPaper) : '') + '</dd>'
+        : '') +
+      '<dt>' + t('曝光补偿') + '</dt><dd>' + evText + ' EV</dd>' +
+      '<dt>' + t('闪光') + '</dt><dd>' + t(row.flash ? (row.flashKind === 'torch' ? '已触发（LED）' : '已触发（屏幕）') : '未触发') + '</dd>' +
+      '<dt>' + t('冲印时间') + '</dt><dd>' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
+      ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</dd>' +
+      '<dt>' + t('尺寸') + '</dt><dd>' + row.w + ' × ' + row.h + '</dd>' +
+      '<dt>' + t('日期打印') + '</dt><dd>' + t(row.date ? '已开启' : '未开启') + '</dd>';
+  }
+
   function openLightbox(id) {
     if (el.lightbox.open) return;
     var found = null;
@@ -2162,30 +2206,7 @@
       if (token !== lbToken || el.lightbox.open) return;
       if (!row || !row.blob) { toast('这张底片读不出来，请刷新影集'); return; }
       state.current = row;
-      el.lbImage.src = url(row.blob);
-      el.lbCode.textContent = row.code;
-      var lbEn = row.en ? String(row.en) : '';
-      var lbName = String(row.name || '');
-      if (lbEn) {
-        var nLower = lbName.toLowerCase(), eLower = lbEn.toLowerCase();
-        if (eLower === nLower || nLower.indexOf(eLower) >= 0 || eLower.indexOf(nLower) >= 0) lbEn = '';
-      }
-      el.lbName.textContent = lbName + (lbEn ? ' · ' + lbEn : '');
-      var d = new Date(row.ts || Date.now());
-      var evText = typeof row.ev === 'number' ? fmtEv(row.ev) : '0.0';
-      el.lbMeta.innerHTML =
-        '<dt>卷 / 张</dt><dd>ROLL ' + pad2(row.roll || 1) + ' · #' + pad2(row.frameNo || 1) + '</dd>' +
-        '<dt>乳剂</dt><dd>' + row.code + ' · ISO ' + row.iso + '</dd>' +
-        (row.spectral
-          ? '<dt>光谱模拟</dt><dd>' + (row.spectralFilmName || row.code) +
-            (row.spectralPaperName ? ' · ' + row.spectralPaperName : '') + '</dd>'
-          : '') +
-        '<dt>曝光补偿</dt><dd>' + evText + ' EV</dd>' +
-        '<dt>闪光</dt><dd>' + (row.flash ? (row.flashKind === 'torch' ? '已触发（LED）' : '已触发（屏幕）') : '未触发') + '</dd>' +
-        '<dt>冲印时间</dt><dd>' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) +
-        ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</dd>' +
-        '<dt>尺寸</dt><dd>' + row.w + ' × ' + row.h + '</dd>' +
-        '<dt>日期打印</dt><dd>' + (row.date ? '已开启' : '未开启') + '</dd>';
+      paintLightbox(row);
       el.lightbox.showModal();
       /* 原生 dialog 会聚焦第一个可操作项并把它滚进视口；这里统一回到顶部，
          让小屏 / 横屏打开时先看到照片，而不是直接落在保存按钮上 */
@@ -2285,7 +2306,12 @@
   }
 
   function onFile(file) {
-    if (!file || !file.type || file.type.indexOf('image/') !== 0) {
+    var name = file && typeof file.name === 'string' ? file.name.toLowerCase() : '';
+    var type = file && typeof file.type === 'string' ? file.type.toLowerCase() : '';
+    /* 部分手机、拖拽和云盘会给空 MIME / application/octet-stream；用明确的图片扩展名
+       补识别，让有效图片继续解码，也让 HEIC/RAW 等进入已有的专属错误提示。 */
+    var imageExtension = /\.(jpe?g|png|webp|gif|avif|heic|heif|tiff?|raw|dng|cr2|cr3|nef|arw|raf|orf|rw2|jxl)$/.test(name);
+    if (!file || (type.indexOf('image/') !== 0 && !imageExtension)) {
       toast('请选择一张图片');
       return;
     }
@@ -2439,6 +2465,7 @@
      Toast
      ====================================================================== */
   var toastTimer = null, toastHideTimer = null, toastAction = null;
+  var toastMessage = '', toastActionLabel = '';
 
   /* 原生 dialog 位于 top layer，普通 fixed 元素会被它整体盖住；
      灯箱打开时把 Toast 临时挂到 dialog 内部，关闭时再搬回 body */
@@ -2449,13 +2476,15 @@
 
   function toast(msg, actionLabel, action) {
     placeToast();
+    toastMessage = msg;
+    toastActionLabel = actionLabel || '';
     /* 先取消 hidden 再改文案：live region 在隐藏状态下写内容，读屏可能不播报 */
     el.toast.hidden = false;
-    el.toastText.textContent = msg;
+    el.toastText.textContent = t(msg);
     toastAction = action || null;
     if (actionLabel && action) {
       el.toastUndo.hidden = false;
-      el.toastUndo.textContent = actionLabel;
+      el.toastUndo.textContent = t(actionLabel);
     } else {
       el.toastUndo.hidden = true;
     }
@@ -2472,6 +2501,8 @@
       toastHideTimer = setTimeout(function () {
         el.toast.hidden = true;
         toastHideTimer = null;
+        toastMessage = '';
+        toastActionLabel = '';
       }, 240);
     }, actionLabel ? 6000 : 2600);
   }
@@ -2561,9 +2592,16 @@
   var FLASH_CHARS = ['关', '自', '强'];
   function updateFlashUi() {
     setPressed('flash', prefs.flash > 0);
-    el.flashVal.textContent = FLASH_CHARS[prefs.flash] || '关';
+    el.flashVal.textContent = t(FLASH_CHARS[prefs.flash] || '关');
     var b = $('.fn[data-act="flash"]');
-    if (b) b.setAttribute('aria-label', '闪光灯：' + ['关闭', '自动', '强制'][prefs.flash]);
+    if (b) b.setAttribute('aria-label', t('闪光灯：' + ['关闭', '自动', '强制'][prefs.flash]));
+  }
+  function updateTimerUi() {
+    el.timerVal.textContent = prefs.timer === 0 ? t('关') : prefs.timer + 's';
+  }
+  function updateGrainUi() {
+    var b = $('.fn[data-act="grain"]');
+    if (b) b.setAttribute('aria-label', t('颗粒：' + (prefs.grain ? '开' : '关')));
   }
 
   function syncEvWheel() {
@@ -2583,6 +2621,11 @@
   }
 
   function bindControls() {
+    /* 顶盖回卷旁的金属语言按钮，桌面与手机共用 */
+    $$('[data-lang-switch]').forEach(function (button) {
+      button.addEventListener('click', toggleLanguage);
+    });
+
     /* 快门 */
     el.shutter.addEventListener('click', shoot);
 
@@ -2602,7 +2645,7 @@
         prefs.timer = prefs.timer === 0 ? 3 : prefs.timer === 3 ? 10 : 0;
         savePrefs();
         b.setAttribute('aria-pressed', prefs.timer > 0 ? 'true' : 'false');
-        el.timerVal.textContent = prefs.timer === 0 ? '关' : prefs.timer + 's';
+        updateTimerUi();
         /* 倒计时已经跑起来时把定时切回「关」，应当取消这次拍摄 */
         if (prefs.timer === 0) cancelCountdown();
       } else if (act === 'flash') {
@@ -2627,7 +2670,7 @@
         prefs.grain = !prefs.grain;
         savePrefs();
         b.setAttribute('aria-pressed', prefs.grain ? 'true' : 'false');
-        b.setAttribute('aria-label', '颗粒：' + (prefs.grain ? '开' : '关'));
+        updateGrainUi();
         if (prefs.sound) Sound.play('tick');
       } else if (act === 'import') {
         pickFile();
@@ -2928,10 +2971,43 @@
     return Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2));
   }
 
+  /* 切换语言不重载页面：保留照片、撤销回调、焦点和正在进行的异步操作。 */
+  function applyLocalizedState() {
+    paintCurrentFilm();
+    renderFilmList();
+    renderPaperList();
+    setSpectralStatus(state.spectralStatus || '正在载入…');
+    paintAlbum(state.shots);
+    updateFlashUi();
+    updateTimerUi();
+    updateGrainUi();
+    if (!el.notice.hidden) el.noticeText.textContent = t(state.noticeText);
+    if (!el.processing.hidden) {
+      el.procTitle.textContent = t(state.procTitle);
+      el.procNote.textContent = t(state.procNote);
+    }
+    if (!el.toast.hidden) {
+      el.toastText.textContent = t(toastMessage);
+      if (toastActionLabel) el.toastUndo.textContent = t(toastActionLabel);
+    }
+    if (el.lightbox.open && state.current) paintLightbox(state.current);
+    state.dirty = true;
+    layoutPreview();
+    refreshPreview();
+  }
+
+  function toggleLanguage() {
+    prefs.lang = prefs.lang === 'en' ? 'zh-CN' : 'en';
+    savePrefs();
+    I18N.setLanguage(prefs.lang);
+    applyLocalizedState();
+  }
+
   /* ======================================================================
      启动
      ====================================================================== */
   function init() {
+    I18N.setLanguage(prefs.lang);
     renderFilmList();
     renderPaperList();
     el.frameBox.classList.toggle('show-grid', prefs.grid);
@@ -2939,11 +3015,10 @@
     setPressed('date', prefs.date);
     setPressed('sound', prefs.sound);
     setPressed('grain', prefs.grain);
-    var grainBtn = $('.fn[data-act="grain"]');
-    if (grainBtn) grainBtn.setAttribute('aria-label', '颗粒：' + (prefs.grain ? '开' : '关'));
+    updateGrainUi();
     setPressed('timer', prefs.timer > 0);
     updateFlashUi();
-    el.timerVal.textContent = prefs.timer === 0 ? '关' : prefs.timer + 's';
+    updateTimerUi();
     updateEv();
     updateCounter();
     setTab('films');

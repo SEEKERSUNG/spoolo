@@ -11,32 +11,34 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Oswald:wght@300;400;500;600&display=swap" rel="stylesheet"></noscript>
-<link rel="stylesheet" href="css/base.css?v=1.22.0">
-<link rel="stylesheet" href="css/ui.css?v=1.22.0">
+<link rel="stylesheet" href="css/base.css?v=1.24.2">
+<link rel="stylesheet" href="css/ui.css?v=1.24.2">
 </head>
 <body>
 <div class="room" aria-hidden="true"></div>
 
-<a class="skip" href="#deck">跳到相机操作区</a>
-<h1 class="sr-only">SPOOLO · 一台网页里的胶片相机</h1>
+<a class="skip" href="#deck" data-i18n="跳到相机操作区">跳到相机操作区</a>
+<h1 class="sr-only" data-i18n="SPOOLO · 一台网页里的胶片相机">SPOOLO · 一台网页里的胶片相机</h1>
 
 <main class="stage">
   <!-- ======================= 机身 ======================= -->
-  <section class="camera" aria-label="SPOOLO 胶片相机机身">
+  <section class="camera" data-i18n-aria-label="SPOOLO 胶片相机机身" aria-label="SPOOLO 胶片相机机身">
     <div class="chassis">
 
       <!-- 顶盖 -->
       <div class="plate">
-        <button class="rewind" id="rewind" type="button" aria-label="回卷换新卷">
+        <button class="rewind" id="rewind" type="button" data-i18n-aria-label="回卷换新卷" aria-label="回卷换新卷">
           <span class="rewind-cap" aria-hidden="true"><i></i></span>
           <span class="engrave">REWIND</span>
         </button>
+
+        <button class="lang-switch" type="button" data-lang-switch aria-label="切换到英文" lang="en">EN</button>
 
         <div class="maker">
           <span class="maker-name">SPOOLO</span>
           <span class="maker-sub">135 FORMAT · MODEL 35S</span>
           <span class="maker-meta">
-            <span>v1.22.0</span><span class="maker-format"> · 135 胶片相机</span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
+            <span>v1.24.2</span><span class="maker-format"> · <span data-i18n="135 胶片相机">135 胶片相机</span></span><span> · </span><a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
           </span>
         </div>
 
@@ -75,17 +77,17 @@
                   <span>ISO <b id="roIso">—</b></span>
                   <span class="ro-ev">EV <b id="roEv">0</b></span>
                 </p>
-                <p class="ro right"><b id="roLeft">36</b> 张剩余</p>
+                <p class="ro right"><b id="roLeft">36</b> <span data-i18n="张剩余">张剩余</span></p>
               </div>
 
               <p class="vf-notice" id="vfNotice" hidden>
                 <span class="vf-notice-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7l1.3-2h7l1.3 2h1.7A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/><circle cx="12" cy="12.5" r="3.5"/><path d="M4 4l16 16"/></svg>
                 </span>
-                <span id="vfNoticeText">未连接镜头</span>
+                <span id="vfNoticeText" data-i18n="未连接镜头">未连接镜头</span>
                 <span class="vf-notice-actions">
-                  <button type="button" class="link" id="vfRetry">重试</button>
-                  <button type="button" class="link primary" id="vfImport">导入底片</button>
+                  <button type="button" class="link" id="vfRetry" data-i18n="重试">重试</button>
+                  <button type="button" class="link primary" id="vfImport" data-i18n="导入底片">导入底片</button>
                 </span>
               </p>
 
@@ -100,6 +102,7 @@
         <!-- 胶片仓 -->
         <div class="chamber">
           <div class="roll-knob" id="rollKnob" role="slider" tabindex="0"
+               data-i18n-aria-label="选择胶卷" data-i18n-aria-valuetext="正在载入光谱胶卷"
                aria-label="选择胶卷" aria-valuemin="1" aria-valuemax="20" aria-valuenow="1"
                aria-valuetext="正在载入光谱胶卷">
             <span class="roll-cap" aria-hidden="true"><i></i></span>
@@ -110,15 +113,15 @@
             <span class="canister-swatch" id="canSwatch" aria-hidden="true"></span>
             <span class="canister-body">
               <span class="canister-code" id="canCode">···</span>
-              <span class="canister-name" id="canName">正在载入</span>
-              <span class="canister-meta" id="canMeta">光谱数据载入中</span>
+              <span class="canister-name" id="canName" data-i18n="正在载入">正在载入</span>
+              <span class="canister-meta" id="canMeta" data-i18n="光谱数据载入中">光谱数据载入中</span>
             </span>
             <span class="canister-bars" id="canBars" aria-hidden="true"></span>
           </div>
 
           <button class="chip" id="openFilms" type="button" aria-haspopup="dialog" aria-controls="lab">
             <svg class="chip-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16l8 4 8-4"/></svg>
-            <span>胶卷库</span><span class="chip-count" id="filmCount">20</span>
+            <span data-i18n="胶卷库">胶卷库</span><span class="chip-count" id="filmCount">20</span>
           </button>
         </div>
 
@@ -129,56 +132,56 @@
               <button class="fn" type="button" data-act="flip" aria-pressed="false">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 9.5A6.5 6.5 0 0 1 16 5.6l2 1.9"/><path d="M18 4v3.5h-3.5"/><path d="M19.5 14.5A6.5 6.5 0 0 1 8 18.4l-2-1.9"/><path d="M6 20v-3.5h3.5"/></svg>
-                <span class="fn-label">镜头</span>
+                <span class="fn-label"><span data-i18n="镜头">镜头</span></span>
               </button>
               <button class="fn" type="button" data-act="timer" aria-pressed="false">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="7"/><path d="M12 9.5V13l2.5 1.8"/><path d="M9 3h6"/></svg>
-                <span class="fn-label">定时<b class="fn-val" id="timerVal">关</b></span>
+                <span class="fn-label"><span data-i18n="定时">定时</span><b class="fn-val" id="timerVal" data-i18n="关">关</b></span>
               </button>
               <button class="fn" type="button" data-act="flash" aria-pressed="false">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4.5 13.5H10l-1 8.5 8.5-11.5H12l1-8.5z"/></svg>
-                <span class="fn-label">闪光<b class="fn-val" id="flashVal">关</b></span>
+                <span class="fn-label"><span data-i18n="闪光">闪光</span><b class="fn-val" id="flashVal" data-i18n="关">关</b></span>
               </button>
               <button class="fn" type="button" data-act="grid" aria-pressed="true">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M12 4v16M4 12h16"/></svg>
-                <span class="fn-label">网格</span>
+                <span class="fn-label"><span data-i18n="网格">网格</span></span>
               </button>
             </div>
             <div class="rail rail-right">
               <button class="fn" type="button" data-act="date" aria-pressed="false">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M8 3v4M16 3v4M4 10h16"/><path d="M8.5 14h2M13.5 14h2M8.5 17h2M13.5 17h2"/></svg>
-                <span class="fn-label">日期</span>
+                <span class="fn-label"><span data-i18n="日期">日期</span></span>
               </button>
               <button class="fn" type="button" data-act="sound" aria-pressed="true">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3H5z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M18 7a7 7 0 0 1 0 10"/></svg>
-                <span class="fn-label">快门声</span>
+                <span class="fn-label"><span data-i18n="快门声">快门声</span></span>
               </button>
-              <button class="fn" type="button" data-act="grain" aria-pressed="true" aria-label="颗粒：开">
+              <button class="fn" type="button" data-act="grain" aria-pressed="true" data-i18n-aria-label="颗粒：开" aria-label="颗粒：开">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="8" r="1.2"/><circle cx="14" cy="6" r="1"/><circle cx="18" cy="11" r="1.3"/><circle cx="10" cy="14" r="1.4"/><circle cx="16" cy="17" r="1"/><circle cx="6" cy="18" r="1.1"/><circle cx="12" cy="10" r="0.9"/><circle cx="20" cy="19" r="0.9"/></svg>
-                <span class="fn-label">颗粒</span>
+                <span class="fn-label"><span data-i18n="颗粒">颗粒</span></span>
               </button>
               <button class="fn" type="button" data-act="import" aria-pressed="false">
                 <span class="led" aria-hidden="true"></span>
                 <svg class="fn-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v9M8.5 9.5 12 13l3.5-3.5"/><path d="M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
-                <span class="fn-label">导入</span>
+                <span class="fn-label"><span data-i18n="导入">导入</span></span>
               </button>
             </div>
           </div>
 
           <div class="release">
-            <div class="ev" role="group" aria-label="曝光补偿">
+            <div class="ev" role="group" data-i18n-aria-label="曝光补偿" aria-label="曝光补偿">
               <span class="ev-read">
                 <span class="engrave">EV</span>
                 <span class="ev-value" id="evValue">0</span>
               </span>
               <div class="ev-wheel" id="evWheel" role="slider" tabindex="0"
-                   aria-label="曝光补偿" aria-orientation="vertical"
+                   data-i18n-aria-label="曝光补偿" aria-label="曝光补偿" aria-orientation="vertical"
                    aria-valuemin="-2" aria-valuemax="2" aria-valuenow="0" aria-valuetext="0.0 EV">
                 <span class="ev-window" aria-hidden="true">
                   <span class="ev-drum" id="evDrum"></span>
@@ -187,14 +190,14 @@
               </div>
             </div>
 
-            <button class="shutter" id="shutter" type="button" aria-label="按下快门拍摄">
+            <button class="shutter" id="shutter" type="button" data-i18n-aria-label="按下快门拍摄" aria-label="按下快门拍摄">
               <span class="shutter-ring" aria-hidden="true"></span>
               <span class="shutter-core" aria-hidden="true"></span>
             </button>
 
-            <button class="peek" id="peek" type="button" aria-label="打开影集查看上一张">
+            <button class="peek" id="peek" type="button" data-i18n-aria-label="打开影集查看上一张" aria-label="打开影集查看上一张">
               <img id="peekImg" alt="" hidden>
-              <span class="peek-empty" id="peekEmpty" aria-hidden="true">空<br>卷</span>
+              <span class="peek-empty" id="peekEmpty" aria-hidden="true" data-i18n-html="空<br>卷">空<br>卷</span>
             </button>
           </div>
         </div>
@@ -203,34 +206,34 @@
   </section>
 
   <!-- ======================= 暗房 / 胶卷库 ======================= -->
-  <aside class="lab" id="lab" aria-label="胶卷库、相纸与影集">
+  <aside class="lab" id="lab" data-i18n-aria-label="胶卷库、相纸与影集" aria-label="胶卷库、相纸与影集">
     <div class="sheet-head">
       <span class="sheet-grip" aria-hidden="true"></span>
-      <span class="sheet-title">暗房台</span>
-      <button class="sheet-close" id="sheetClose" type="button" aria-label="收起暗房台">收起</button>
+      <span class="sheet-title" data-i18n="暗房台">暗房台</span>
+      <button class="sheet-close" id="sheetClose" type="button" data-i18n-aria-label="收起暗房台" aria-label="收起暗房台"><span data-i18n="收起">收起</span></button>
     </div>
 
-    <div class="lab-tabs" role="tablist" aria-label="暗房分类">
-      <button class="lab-tab" id="tabFilms" type="button" role="tab" tabindex="0" aria-selected="true" aria-controls="panelFilms">胶卷库</button>
-      <button class="lab-tab" id="tabPaper" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="panelPaper">相纸</button>
-      <button class="lab-tab" id="tabAlbum" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="panelAlbum">影集<b class="badge" id="albumBadge">0</b></button>
+    <div class="lab-tabs" role="tablist" data-i18n-aria-label="暗房分类" aria-label="暗房分类">
+      <button class="lab-tab" id="tabFilms" type="button" role="tab" tabindex="0" aria-selected="true" aria-controls="panelFilms" data-i18n="胶卷库">胶卷库</button>
+      <button class="lab-tab" id="tabPaper" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="panelPaper" data-i18n="相纸">相纸</button>
+      <button class="lab-tab" id="tabAlbum" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="panelAlbum"><span data-i18n="影集">影集</span><b class="badge" id="albumBadge">0</b></button>
     </div>
 
     <div class="panel" id="panelFilms" role="tabpanel" aria-labelledby="tabFilms" tabindex="0">
-      <p class="panel-note">二十种 spektrafilm 光谱乳剂。换卷即刻生效；负片走相纸扩印，反转片直接扫描胶片。</p>
+      <p class="panel-note" data-i18n="二十种 spektrafilm 光谱乳剂。换卷即刻生效；负片走相纸扩印，反转片直接扫描胶片。">二十种 spektrafilm 光谱乳剂。换卷即刻生效；负片走相纸扩印，反转片直接扫描胶片。</p>
 
       <section class="spectra" aria-labelledby="spectraTitle">
         <div class="spectra-head">
-          <p class="spectra-title" id="spectraTitle">光谱胶片模拟 <span class="spectra-tag">SPECTRAL</span></p>
-          <p class="spectra-status" id="spectraStatus" role="status" aria-live="polite">正在载入…</p>
+          <p class="spectra-title" id="spectraTitle"><span data-i18n="光谱胶片模拟">光谱胶片模拟</span> <span class="spectra-tag">SPECTRAL</span></p>
+          <p class="spectra-status" id="spectraStatus" role="status" aria-live="polite" data-i18n="正在载入…">正在载入…</p>
         </div>
         <p class="spectra-credit">
-          色彩链与数据来自
+          <span data-i18n="色彩链与数据来自">色彩链与数据来自</span>
           <a href="https://github.com/andreavolpato/spektrafilm" target="_blank" rel="noopener">spektrafilm</a>
           / Andrea Volpato /
           <a href="LICENSE">GPL-3.0-or-later</a> /
           <a href="third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt">CC BY-SA 4.0</a> /
-          SPOOLO 修改（2026）
+          <span data-i18n="SPOOLO 修改（2026）">SPOOLO 修改（2026）</span>
         </p>
       </section>
 
@@ -238,38 +241,38 @@
     </div>
 
     <div class="panel" id="panelPaper" role="tabpanel" aria-labelledby="tabPaper" tabindex="0" hidden>
-      <p class="panel-note">八种彩色相纸。相纸决定负片扩印后的色彩与密度响应；反转片直接扫描胶片，不经过相纸。</p>
+      <p class="panel-note" data-i18n="八种彩色相纸。相纸决定负片扩印后的色彩与密度响应；反转片直接扫描胶片，不经过相纸。">八种彩色相纸。相纸决定负片扩印后的色彩与密度响应；反转片直接扫描胶片，不经过相纸。</p>
       <div class="paper-credit">
-        <b>数据与算法来源</b>
+        <b data-i18n="数据与算法来源">数据与算法来源</b>
         <a href="https://github.com/andreavolpato/spektrafilm" target="_blank" rel="noopener">spektrafilm</a>
         / Andrea Volpato /
-        数据 <a href="third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt">CC BY-SA 4.0</a> /
-        代码 <a href="LICENSE">GPL-3.0-or-later</a> /
-        SPOOLO 修改（2026）
+        <span data-i18n="数据">数据</span> <a href="third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt">CC BY-SA 4.0</a> /
+        <span data-i18n="代码">代码</span> <a href="LICENSE">GPL-3.0-or-later</a> /
+        <span data-i18n="SPOOLO 修改（2026）">SPOOLO 修改（2026）</span>
       </div>
       <ul class="film-list" id="paperList"></ul>
     </div>
 
     <div class="panel" id="panelAlbum" role="tabpanel" aria-labelledby="tabAlbum" tabindex="0" hidden>
       <div class="album-head">
-        <p class="album-stat" id="albumStat">还没有冲洗出照片</p>
-        <button class="chip" id="albumImport" type="button">导入底片</button>
-        <button class="chip" id="albumManage" type="button" aria-pressed="false">管理</button>
+        <p class="album-stat" id="albumStat" data-i18n="还没有冲洗出照片">还没有冲洗出照片</p>
+        <button class="chip" id="albumImport" type="button" data-i18n="导入底片">导入底片</button>
+        <button class="chip" id="albumManage" type="button" aria-pressed="false" data-i18n="管理">管理</button>
       </div>
       <div class="album-batch" id="albumBatch" hidden>
-        <span class="batch-count" id="batchCount" role="status" aria-live="polite">已选 0 张</span>
-        <button class="chip" id="batchAll" type="button">全选</button>
-        <button class="chip" id="batchSave" type="button" disabled>保存所选</button>
-        <button class="chip danger" id="batchDelete" type="button" disabled>删除所选</button>
+        <span class="batch-count" id="batchCount" role="status" aria-live="polite" data-i18n="已选 0 张">已选 0 张</span>
+        <button class="chip" id="batchAll" type="button" data-i18n="全选">全选</button>
+        <button class="chip" id="batchSave" type="button" data-i18n="保存所选" disabled>保存所选</button>
+        <button class="chip danger" id="batchDelete" type="button" data-i18n="删除所选" disabled>删除所选</button>
       </div>
       <div class="negatives" id="negatives">
-        <p class="panel-note">没有镜头也可以玩：导入一张底片，按快门就能走完整个冲印流程。</p>
+        <p class="panel-note" data-i18n="没有镜头也可以玩：导入一张底片，按快门就能走完整个冲印流程。">没有镜头也可以玩：导入一张底片，按快门就能走完整个冲印流程。</p>
       </div>
       <ul class="frames" id="frames"></ul>
     </div>
 
     <p class="lab-foot">
-      <b>SPOOLO</b> v1.22.0<span>·</span>135 胶片相机
+      <b>SPOOLO</b> v1.24.2<span>·</span><em data-i18n="135 胶片相机">135 胶片相机</em><span>·</span>
       <a href="https://github.com/SEEKERSUNG/spoolo" target="_blank" rel="noopener">GitHub</a>
     </p>
   </aside>
@@ -283,19 +286,19 @@
 <!-- 冲印中 -->
 <div class="processing" id="processing" hidden role="status" aria-live="polite" tabindex="-1">
   <div class="proc-card">
-    <p class="proc-title" id="procTitle">C-41 冲印中</p>
+    <p class="proc-title" id="procTitle" data-i18n="C-41 冲印中">C-41 冲印中</p>
     <ol class="proc-steps">
-      <li data-step="0">曝光</li><li data-step="1">显影</li><li data-step="2">定影</li><li data-step="3">干燥</li>
+      <li data-step="0" data-i18n="曝光">曝光</li><li data-step="1" data-i18n="显影">显影</li><li data-step="2" data-i18n="定影">定影</li><li data-step="3" data-i18n="干燥">干燥</li>
     </ol>
     <div class="proc-bar"><i id="procBar"></i></div>
-    <p class="proc-note" id="procNote">正在按光谱曲线还原色彩…</p>
+    <p class="proc-note" id="procNote" data-i18n="正在按光谱曲线还原色彩…">正在按光谱曲线还原色彩…</p>
   </div>
 </div>
 
 <!-- 单张查看 -->
-<dialog class="lightbox" id="lightbox" aria-label="查看照片" tabindex="-1">
+<dialog class="lightbox" id="lightbox" data-i18n-aria-label="查看照片" aria-label="查看照片" tabindex="-1">
   <div class="lb-stage">
-    <button class="lb-close" type="button" data-act="close" aria-label="关闭灯箱">×</button>
+    <button class="lb-close" type="button" data-act="close" data-i18n-aria-label="关闭灯箱" aria-label="关闭灯箱">×</button>
     <div class="lb-film">
       <span class="perf left" aria-hidden="true"></span>
       <img id="lbImage" alt="">
@@ -304,27 +307,28 @@
   </div>
   <div class="lb-side">
     <p class="lb-code" id="lbCode">PT-400</p>
-    <p class="lb-name" id="lbName">暖肤人像</p>
+    <p class="lb-name" id="lbName" data-i18n="暖肤人像">暖肤人像</p>
     <dl class="lb-meta" id="lbMeta"></dl>
     <div class="lb-actions">
-      <button class="btn primary" type="button" data-act="save">保存到本地</button>
-      <button class="btn danger" type="button" data-act="del">删除</button>
+      <button class="btn primary" type="button" data-act="save" data-i18n="保存到本地">保存到本地</button>
+      <button class="btn danger" type="button" data-act="del" data-i18n="删除">删除</button>
     </div>
-    <button class="btn ghost" type="button" data-act="close">关闭</button>
+    <button class="btn ghost" type="button" data-act="close" data-i18n="关闭">关闭</button>
   </div>
 </dialog>
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden>
-  <span id="toastText">已删除</span>
-  <button type="button" id="toastUndo" hidden>撤销</button>
+  <span id="toastText" data-i18n="已删除">已删除</span>
+  <button type="button" id="toastUndo" data-i18n="撤销" hidden>撤销</button>
 </div>
 
-<input type="file" id="fileInput" class="file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" tabindex="-1" aria-label="导入底片">
+<input type="file" id="fileInput" class="file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" tabindex="-1" data-i18n-aria-label="导入底片" aria-label="导入底片">
 
-<script src="js/films.js?v=1.22.0"></script>
-<script src="js/store.js?v=1.22.0"></script>
-<script src="js/gpu-develop.js?v=1.22.0"></script>
-<script src="js/zip.js?v=1.22.0"></script>
-<script src="js/app.js?v=1.22.0"></script>
+<script src="js/i18n.js?v=1.24.2"></script>
+<script src="js/films.js?v=1.24.2"></script>
+<script src="js/store.js?v=1.24.2"></script>
+<script src="js/gpu-develop.js?v=1.24.2"></script>
+<script src="js/zip.js?v=1.24.2"></script>
+<script src="js/app.js?v=1.24.2"></script>
 </body>
 </html>
