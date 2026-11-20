@@ -2,7 +2,7 @@
 
 # SPOOLO · A Film Camera in Your Browser
 
-> **Version v1.24.2**
+> **Version v1.24.3**
 > Try it online: <https://seekersung.github.io/spoolo/>
 > Source repository: <https://github.com/SEEKERSUNG/spoolo>
 > Technical documentation: [TECHNICAL.md](TECHNICAL.md)
@@ -61,6 +61,7 @@ The data and algorithms come from **spektrafilm** (by Andrea Volpato):
 - Code: GPL-3.0-or-later; film/paper profile data: CC BY-SA 4.0
 - This port includes only the film and paper color pipeline. It does not port cropping, custom grading, Raw decoding, scanner LUTs, grain, halation, glare, or similar modules; SPOOLO still implements those spatial effects itself.
 - Input is treated as display sRGB. Upstream uses linear ProPhoto RGB by default, so colors outside the sRGB gamut are clamped—a trade-off imposed by the web camera’s input format.
+- Data was checked against upstream commit `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`: Vision3 200T / 500T use the `T` incandescent reference illuminant, while Kodak 2383 / 2393 use `K75P` for viewing. Reversal-film scanning illuminants and output matrices depend only on the film itself and never change with the selected paper.
 
 See [THIRD_PARTY.md](THIRD_PARTY.md) for full attribution, modification notes, and license obligations. The upstream profile license is preserved at
 [`third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt`](third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt).
@@ -76,6 +77,7 @@ See [THIRD_PARTY.md](THIRD_PARTY.md) for full attribution, modification notes, a
 - **Flash**: the function key cycles through off / auto / forced; auto mode triggers according to viewfinder brightness. Browsers that support hardware `torch` (mostly Chrome on Android) light the LED directly. Other environments, including Safari on iPhone, automatically fall back to a full-screen fill light, add warm light to the center of the final image, and record the trigger method in the negative’s metadata. The white screen remains for about 0.7 seconds to give the camera’s auto-exposure time to respond; if the image is still very dark after the flash, SPOOLO takes another, brighter frame and compensates by up to 4 EV. Note: with the rear camera, the phone’s screen faces away from the subject and cannot illuminate it. On an iPhone without hardware LED support for the rear camera, SPOOLO can only brighten the image as much as possible and suggest using the front camera or adding ambient light.
 - **36 exposures per roll**: the counter decreases with each shot, a full roll rewinds automatically, and manual rewind is also available.
 - **Darkroom development**: after capture, a four-step animation runs through “Exposure / Development / Fixing / Drying.” The WebGL pipeline applies the spectral LUT, lens softening/chromatic aberration, halation/global bloom, grain, vignetting, light leaks, flash, and date watermark on the GPU. Images are rendered at the lens source resolution (1080×1440 for a phone in portrait, up to a 1920px long edge on desktop), with the CPU pipeline as a fallback.
+- **Faster development**: invisible viewfinder uploads and drawing pause behind the processing overlay, GPU texture storage is reused, and the full JPEG and matching thumbnail are encoded in parallel. Animation waits overlap real work without changing resolution, spectral LUTs, grain, or JPEG quality.
 - **Album**: local IndexedDB storage, with a lightbox for negative metadata, local saving, and deletion with a 6-second undo window. Thumbnails are scaled directly from the 720px final images, so their grain patterns match the images opened in the lightbox. Older negatives are rebuilt on demand in the background when the album opens. Batch management supports multi-select/select all, batch saving (system sharing on mobile; ZIP archives on desktop), and batch deletion with undo.
 - **Import and develop**: send a local photo to the darkroom as a negative and develop it with any film. JPEG / PNG / WebP / GIF / AVIF are supported. HEIC/HEIF, TIFF, camera RAW, and JPEG XL must first be exported as JPEG because browsers cannot decode these formats natively; on failure, the viewfinder explains the specific reason and suggests how to export the image. When a file’s MIME type is empty or `application/octet-stream`, SPOOLO also recognizes explicit image extensions instead of incorrectly rejecting a valid image.
 - **Graceful degradation**: when no camera is available or permission is denied, the viewfinder offers only “Retry” and “Import Negative.” Importing one photo is enough to complete the full capture and development workflow.

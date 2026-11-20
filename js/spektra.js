@@ -163,12 +163,11 @@
     DATA = d;
     shared = d.shared;
     shared.cmf = decodeF32(shared.cmf);
-    shared.illu = {
-      D50: decodeF32(shared.illu.D50),
-      D55: decodeF32(shared.illu.D55),
-      D65: decodeF32(shared.illu.D65),
-      'TH-KG3': decodeF32(shared.illu['TH-KG3'])
-    };
+    var encodedIlluminants = shared.illu;
+    shared.illu = {};
+    Object.keys(encodedIlluminants).forEach(function (key) {
+      shared.illu[key] = decodeF32(encodedIlluminants[key]);
+    });
     shared.dichroic = decodeF32(shared.dichroic);
     shared.logExposure = decodeF32(shared.logExposure);
     shared.kg3 = decodeF32(shared.kg3);
@@ -184,6 +183,8 @@
       f.cd = decodeF32(f.cd);
       f.bd = decodeF32(f.bd);
       f.mIn = new Float32Array(f.mIn);
+      if (!f.mOut) throw new Error('missing-film-output-matrix:' + f.id);
+      f.mOut = new Float32Array(f.mOut);
       f.dcMin = new Float32Array(3);
       f.dcMax = new Float32Array(3);
       for (var c = 0; c < 3; c++) {
@@ -368,8 +369,9 @@
   function scanDensity(p, printDensity, out) {
     var dens = new Float32Array(81);
     spectralDensity(p.cd, p.bd, printDensity, dens);
-    var view = p.viewKey || 'D50';
-    var illu = shared.illu[view] || shared.illu.D50;
+    var view = p.view || p.viewKey || 'D50';
+    var illu = shared.illu[view];
+    if (!illu) throw new Error('unknown-view-illuminant:' + view);
     var cmf = shared.cmf;
     var nx = 0, ny = 0, nz = 0;
     for (var i = 0; i < 81; i++) {
@@ -473,11 +475,11 @@
 
     var illu = makePrintIlluminant(p, f);
 
-    /* 反转片按幻灯片直接扫描，不经过负片相纸；否则相纸会把正像再反一次。
-       扫描矩阵仍借用相纸的 D50 → sRGB 矩阵（目前所有相纸观看光源都是 D50）。 */
+    /* 反转片按幻灯片直接扫描，不经过负片相纸；扫描光源和输出矩阵只由
+       胶片自己的 viewing_illuminant 决定，不能与当前选择的相纸联动。 */
     var directScan = !!f.positive;
     var scanP = directScan
-      ? { cd: f.cd, bd: f.bd, mOut: p.mOut, viewKey: f.view }
+      ? { cd: f.cd, bd: f.bd, mOut: f.mOut, view: f.view }
       : null;
     var scanScale = 1, scanOffset = 0;
 
@@ -645,7 +647,7 @@
 
   function papers() {
     return DATA ? DATA.papers.map(function (p) {
-      return { id: p.id, name: p.name, type: p.type, kind: p.kind || '' };
+      return { id: p.id, name: p.name, type: p.type, kind: p.kind || '', view: p.view || 'D50' };
     }) : [];
   }
 

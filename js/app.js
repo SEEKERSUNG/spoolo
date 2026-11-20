@@ -171,8 +171,8 @@
   function ensureSpectralData() {
     if (S.Spektra && S.SPEKTRA_DATA) return Promise.resolve();
     if (state.spectralLoadPromise) return state.spectralLoadPromise;
-    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.24.2')
-      .then(function () { return loadScriptOnce('js/spektra.js?v=1.24.2'); })
+    state.spectralLoadPromise = loadScriptOnce('js/spektra-data.js?v=1.24.3')
+      .then(function () { return loadScriptOnce('js/spektra.js?v=1.24.3'); })
       .then(function () {
         if (!S.Spektra || !S.SPEKTRA_DATA) throw new Error('spectral-data-missing');
         S.Spektra.setData(S.SPEKTRA_DATA);
@@ -224,7 +224,7 @@
         '<span class="fc-swatch" style="--tone:#d8cbb6"></span>' +
         '<span class="fc-head"><span class="fc-code">' + code + '</span><span class="fc-badge">' + t('使用中') + '</span></span>' +
         '<span class="fc-name">' + p.name + '</span>' +
-        '<span class="fc-en">' + t(p.kind || '彩色相纸') + ' · ' + t(p.type === 'positive' ? '正像' : '负像') + ' · ' + t('D50 观察光') + '</span>' +
+        '<span class="fc-en">' + t(p.kind || '彩色相纸') + ' · ' + t(p.type === 'positive' ? '正像' : '负像') + ' · ' + (p.view || 'D50') + ' ' + t('观察光') + '</span>' +
         '<span class="fc-note">' + t('换纸会重新烘焙当前胶卷的 LUT。') + '</span>' +
         '</button></li>';
     });
@@ -713,6 +713,10 @@
       lastResumeTry = now;
       resumeVideo();
     }
+
+    /* 冲印遮罩后的取景完全不可见：暂停上传摄像头帧和 LUT 绘制，
+       把 CPU/GPU 带宽留给同分辨率的成片；关闭遮罩后下一帧立即恢复。 */
+    if (processingInert) return;
 
     if (now - lastFrame < 1000 / 30) return;
     lastFrame = now;
@@ -1406,40 +1410,41 @@
           ev: capture.ev + rescueEv, lens: true, halation: true, bloom: true, grain: prefs.grain, vignette: true, leak: true,
           seed: seed, dateStamp: capture.date, flash: flashAmt, spectralLut: capture.spectralLut
         });
-        return toBlob(best.canvas, 0.92).then(function (blob) {
+        /* 完整图与同源缩略图只读同一画布，可并行编码；不改变分辨率、颗粒图案或 JPEG 质量。 */
+        return Promise.all([
+          toBlob(best.canvas, 0.92),
+          scaledThumb(best.canvas).catch(function () { return null; })
+        ]).then(function (encoded) {
+          var blob = encoded[0], thumb = encoded[1];
           if (!blob) throw new Error('jpeg-encode-failed');
-          /* 缩略图直接从这张冲印完成的原图缩放：颗粒、日期、光晕都已经是成品，
-             不再对缩略图二次计算噪点，图案与灯箱成片同源 */
-          return scaledThumb(best.canvas).catch(function () { return null; }).then(function (thumb) {
-            var frame = {
-              id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
-              roll: capture.roll,
-              frameNo: capture.frameNo,
-              code: film.code,
-              name: film.name,
-              en: film.en,
-              iso: film.iso,
-              ev: capture.ev,
-              spectral: 1,
-              spectralFilm: capture.spectralFilm || '',
-              spectralPaper: capture.spectralPaper || '',
-              spectralFilmName: film.name,
-              spectralPaperName: film.positive ? '直接扫描' : spectralPaperName(capture.spectralPaper),
-              flash: flashKind ? 1 : 0,
-              flashKind: flashKind,
-              w: best.W,
-              h: best.H,
-              date: capture.date,
-              ts: Date.now(),
-              blob: blob,
-              thumb: thumb || blob,
-              /* 记录缩略图实际宽度；旧底片没有这个字段，打开影集时会按需重建 */
-              thumbW: thumb ? Math.min(THUMB_W, best.W) : best.W
-            };
-            return Store.add(frame).then(function () {
-              frame.persisted = Store.lastAddPersisted !== false;
-              return frame;
-            });
+          var frame = {
+            id: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 6),
+            roll: capture.roll,
+            frameNo: capture.frameNo,
+            code: film.code,
+            name: film.name,
+            en: film.en,
+            iso: film.iso,
+            ev: capture.ev,
+            spectral: 1,
+            spectralFilm: capture.spectralFilm || '',
+            spectralPaper: capture.spectralPaper || '',
+            spectralFilmName: film.name,
+            spectralPaperName: film.positive ? '直接扫描' : spectralPaperName(capture.spectralPaper),
+            flash: flashKind ? 1 : 0,
+            flashKind: flashKind,
+            w: best.W,
+            h: best.H,
+            date: capture.date,
+            ts: Date.now(),
+            blob: blob,
+            thumb: thumb || blob,
+            /* 记录缩略图实际宽度；旧底片没有这个字段，打开影集时会按需重建 */
+            thumbW: thumb ? Math.min(THUMB_W, best.W) : best.W
+          };
+          return Store.add(frame).then(function () {
+            frame.persisted = Store.lastAddPersisted !== false;
+            return frame;
           });
         });
       }).then(function (frame) {
@@ -1654,7 +1659,7 @@
   function openProcessing(film, work) {
     var bar = el.procBar;
     var steps = $$('.proc-steps li');
-    var dur = 500, t0 = performance.now();
+    var dur = 320, t0 = performance.now();
     var result = null, error = null, settled = false;
 
     /* 先取消 hidden，再更新文案：读屏的 live region 才能捕获到这次内容变化 */
@@ -1670,13 +1675,13 @@
     setProcessingInert(true);
     try { el.processing.focus({ preventScroll: true }); } catch (e) { el.processing.focus(); }
 
-    /* 先让遮罩画出来，再开始重活，避免首帧就卡住 */
-    setTimeout(function () {
+    /* 下一帧先让遮罩上屏就立即开始重活，不再额外等待固定 40ms。 */
+    requestAnimationFrame(function () {
       Promise.resolve()
         .then(work)
         .then(function (v) { result = v; settled = true; })
         .catch(function (e) { error = e; settled = true; });
-    }, 40);
+    });
 
     return new Promise(function (resolve, reject) {
       function tick() {
@@ -1697,7 +1702,7 @@
             bar.style.width = '0';
             setProcessingInert(false);
             if (error) reject(error); else resolve(result);
-          }, 100);
+          }, 40);
         };
         wait();
       }

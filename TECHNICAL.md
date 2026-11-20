@@ -1,6 +1,6 @@
 # SPOOLO 技术文档
 
-> 适用版本：**v1.24.2**
+> 适用版本：**v1.24.3**
 > 面向：准备接手维护、调整色彩、增加乳剂或排查移动端问题的开发者。
 > 建议阅读顺序：`README.md` → 本文第 1～3 节 → `js/spektra.js` → `js/films.js` → `js/gpu-develop.js` → `js/app.js` 的冲印部分。
 
@@ -284,16 +284,20 @@ SPOOLO.render(pixels, w, h, film, { ev: 0, spectralLut: lut, grain: true, seed: 
 `takeShot()` → `openProcessing(film, work)`：
 
 1. 显示遮罩，标题按工艺显示“C-41 冲印中 / ECN-2 冲印中 / E-6 冲印中 / K-14 冲印中”。
-2. 先等 40ms 让遮罩画出来，再启动 `work()`，避免首帧卡住。
-3. 四步“曝光 / 显影 / 定影 / 干燥”的进度条固定 500ms；它只是视觉节奏，**不对应真实的分阶段计算**。
-4. 动画结束后每 60ms 检查 `work()` 是否完成；完成后等 100ms 收起遮罩。
-5. 普通拍摄实测按快门到完成约 **0.65–0.7s**，其中固定动画占主要部分；闪光拍摄会额外等待摄像头 AE（约 160–460ms），可能多取一帧。
+2. 下一次 `requestAnimationFrame` 先让遮罩上屏就启动 `work()`，不再额外等固定 40ms；遮罩期间暂停不可见的取景上传与绘制，摄像头流本身保持运行。
+3. 四步“曝光 / 显影 / 定影 / 干燥”的进度条固定 **320ms**；它只是视觉节奏，**不对应真实的分阶段计算**，真实工作较慢时仍等待工作完成。
+4. 动画结束后每 60ms 检查 `work()` 是否完成；完成后等 40ms 收起遮罩并恢复取景。
+5. 闪光拍摄会额外等待摄像头 AE（约 160–460ms），可能多取一帧，这部分不属于后期冲印耗时。
 
 `work()` 内部顺序：
 
 ```
-develop()（GPU/CPU） → toBlob(0.92) → scaledThumb() → Store.add() → 返回 frame
+develop()（GPU/CPU） → Promise.all(toBlob(0.92), scaledThumb()) → Store.add() → 返回 frame
 ```
+
+完整 JPEG 与同源缩略图只读同一成片画布，并行编码，质量参数不变。GPU 源图与光谱图集在尺寸未变时用 `texSubImage2D()` 复用纹理存储，避免每拍一张都重新分配。
+
+v1.24.3 的同环境软件 WebGL 对照（390×844、DPR2、1920×1440 假摄像头，每组首笔预热后取中位数）：两组 Git 基线约 **1064 / 1090ms**，优化后约 **932 / 955ms**，快门到完成降低约 **12–13%**。这不是安卓真机 benchmark；硬件 GPU、摄像头 AE 和浏览器编码实现仍需在目标设备复测。固定静态素材与随机种子的 P400 对照中，GPU 日期开/关和 CPU 三条路径的完整图、缩略图均与基线 JPEG 逐字节一致。
 
 失败路径：JPEG 为空 → `jpeg-encode-failed`；冲印异常 → Toast“冲印失败”；存储失败 → 照片进入内存列表并提示“存储不可用 · 这张只在本次会话”。
 
@@ -387,7 +391,7 @@ halation = antihalation === 'no' ? 0.32 : weak ? 0.20 : 0.12
    反转片跳过相纸，直接把胶片染料密度送去扫描，并按显影后的黑 / 白密度
    归一化扫描亮度（否则幻灯片会整体发灰）。
 5. 负片相纸显影：三层正态 CDF 密度模型。
-6. 扫描：染料密度 → D50 光 → XYZ → sRGB 矩阵（`mOut`）。
+6. 扫描：染料密度 → 当前 stock 的 `view` 观察光 → XYZ → 对应 `mOut`。
 7. 输出色域映射：上游 `oklch` 变体，按 48×360 的 C_max 表做 Reinhard 式压缩。
 
 结果写进 `{ data: Float32Array, atlas: Uint8Array, size: 33, key }`。运行时只保留当前胶片 × 相纸一份；换卷或换纸会防抖 80ms 后重新烘焙。
@@ -694,7 +698,7 @@ b += fa * 0.86;
 3. 重新生成数据：
 
 ```bash
-python3 tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js
+python3 tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js --revision <上游commit>
 ```
 
 4. 刷新页面；`renderFilmList()` / `renderPaperList()` 会自动按数据数量生成卡片，旋钮的 `aria-valuemax` 也按 `Spektra.films().length` 写。
@@ -762,12 +766,12 @@ GPL-3.0-or-later。完整署名与修改说明见 `THIRD_PARTY.md`，上游 prof
 
 ```
 S.SPEKTRA_DATA = {
-  version, source,
-  shared: { cmf, illu: {D50,D55,D65,'TH-KG3'}, dichroic, logExposure,
+  version, source: { revision, ... },
+  shared: { cmf, illu: {D50,D55,D65,T,K75P,'TH-KG3'}, dichroic, logExposure,
             kg3, oklabCmax },
   films: [ { id, name, code, en, tone, process, iso, type, positive,
              ref, view, antihalation, use, consumer, cine, push, target,
-             mIn, tc, tcSize, tcMax, dc, cd, bd, coupler } ],
+             mIn, mOut, tc, tcSize, tcMax, dc, cd, bd, coupler } ],
   papers:[ { id, name, kind, type, positive, view, sens, cd, bd,
              centers, amps, sigmas, mOut } ],
   neutral: { paperId: { filmId: [C,M,Y] } }
@@ -781,8 +785,13 @@ S.SPEKTRA_DATA = {
   片基密度（81 个波长，380–780nm，5nm）；`coupler`：DIR coupler 矩阵。
 - `sens`：相纸光谱灵敏度（81×3）；`centers/amps/sigmas`：相纸密度曲线的
   三层正态 CDF 参数。
-- `mIn` / `mOut`：线性 sRGB D65 → 胶片参考光源 XYZ（CAT16）与
-  相纸观察光 XYZ → sRGB（CAT02）。
+- `mIn`：线性 sRGB D65 → 胶片参考光源 XYZ（CAT16）。`mOut`：当前 stock
+  观察光 XYZ → sRGB（CAT02）；负片扩印读取相纸 `mOut`，反转片 direct scan
+  读取胶片自己的 `mOut`，不随相纸变化。
+- 当前 `source.revision` 为 `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`。
+  Vision3 200T / 500T 的 `ref=T`（Incandescent）；Kodak 2383 / 2393 的
+  `view=K75P`（Kinoton 75P）。生成器对未知参考光 / 观察光显式报错，不再回退
+  D55 / D50；运行时缺光源也会报 `unknown-view-illuminant`。
 - `neutral`：上游 `neutral_print_filters.json` 的中性滤色片 CC 值；
   缺组合时回退 `[0,65,55]`。
 
@@ -790,7 +799,7 @@ S.SPEKTRA_DATA = {
 + 滤色片数据）。重新生成：
 
 ```bash
-python3 tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js
+python3 tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spektra-data.js --revision <上游commit>
 ```
 
 #### 运行时链路
@@ -804,10 +813,10 @@ python3 tools/build-spektra-data.py --upstream /path/to/spektrafilm --out js/spe
    中灰因子用未归一化密度曲线在输入 0.184 处计算，取三通道几何平均的
    倒数，对应上游 `_compute_exposure_factor_midgray`。
 5. 负片相纸显影：三层正态 CDF 密度模型。
-6. 扫描：染料密度 → D50 光 → XYZ → sRGB 矩阵（`mOut`）。
+6. 扫描：染料密度 → 当前 stock 的 `view` 观察光 → XYZ → 对应 `mOut`。
    反转片（`film.positive`）在第 3 步后直接扫描胶片，不再走第 4–5 步；
    扫描亮度按输入 0 / 1 显影后的黑 / 白密度线性归一到 0.01–0.98，
-   因此相纸选择不参与反转片成像。
+   因此相纸选择不参与反转片成像；扫描光源与 `mOut` 也只取胶片自身的 `view`。
 7. 输出色域映射：上游 `oklch` 变体，按 48×360 的 C_max 表做 Reinhard
    软膝压缩。
 8. 线性 sRGB → 显示 sRGB，写入 Float32 LUT。

@@ -13,7 +13,8 @@
 用法：
   python tools/build-spektra-data.py \
       --upstream E:/tmp/spektrafilm-src \
-      --out js/spektra-data.js
+      --out js/spektra-data.js \
+      --revision <上游Git commit>
 
 The upstream checkout must contain:
   src/spektrafilm/data/profiles/*.json
@@ -134,6 +135,11 @@ def load_shared(upstream, shared_path=None):
     illu = {}
     for name in ('D50', 'D55', 'D65'):
         v = np.array(colour.SDS_ILLUMINANTS[name].copy().align(shape)[:], dtype=float)
+        illu[name] = v / np.mean(v)
+    # 与上游 standard_illuminant() 相同：T 为白炽灯，K75P 为 Kinoton 75P；
+    # 都按 5nm 采样后对均值归一化，不能静默回退成 D55 / D50。
+    for name, source_name in (('T', 'Incandescent'), ('K75P', 'Kinoton 75P')):
+        v = np.array(colour.SDS_LIGHT_SOURCES[source_name].copy().align(shape)[:], dtype=float)
         illu[name] = v / np.mean(v)
     # TH-KG3 = 3400 K black body through the Schott KG3 heat filter
     kg3_path = os.path.join(upstream, 'src/spektrafilm/data/filters/heat_absorbing/schott/KG3.csv')
@@ -382,6 +388,7 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--tc-size', type=int, default=49)
     ap.add_argument('--shared', default=None)
+    ap.add_argument('--revision', default=None, help='上游 Git commit，写入数据来源元信息')
     args = ap.parse_args()
 
     up = args.upstream
@@ -407,10 +414,9 @@ def main():
         raw, p = parse_profile(path)
         info = p['info']
         view = info.get('viewing_illuminant', 'D50')
-        view_illu = illu.get(view)
-        if view_illu is None:
-            view_illu = illu['D50']
-            view = 'D50'
+        if view not in illu:
+            raise RuntimeError('unsupported viewing illuminant %r in %s' % (view, stock))
+        view_illu = illu[view]
         m_out = colour.RGB_COLOURSPACES['sRGB'].matrix_XYZ_to_RGB @ cat_matrix(
             illuminant_xy(view_illu, cmf), D65_XY, 'CAT02')
         model = p.get('model')
@@ -443,10 +449,15 @@ def main():
         raw, p = parse_profile(path)
         info = p['info']
         ref = info.get('reference_illuminant', 'D55')
-        ref_illu = illu.get(ref)
-        if ref_illu is None:
-            ref_illu = illu['D55']
-            ref = 'D55'
+        if ref not in illu:
+            raise RuntimeError('unsupported reference illuminant %r in %s' % (ref, stock))
+        ref_illu = illu[ref]
+        view = info.get('viewing_illuminant', 'D50')
+        if view not in illu:
+            raise RuntimeError('unsupported film viewing illuminant %r in %s' % (view, stock))
+        view_illu = illu[view]
+        m_out = colour.RGB_COLOURSPACES['sRGB'].matrix_XYZ_to_RGB @ cat_matrix(
+            illuminant_xy(view_illu, cmf), D65_XY, 'CAT02')
         m_in = cat_matrix(D65_XY, illuminant_xy(ref_illu, cmf), 'CAT16') @ \
             colour.RGB_COLOURSPACES['sRGB'].matrix_RGB_to_XYZ
         positive = info.get('type') == 'positive'
@@ -484,6 +495,7 @@ def main():
             'push': push,
             'target': info.get('target_print'),
             'mIn': m_in.flatten().tolist(),
+            'mOut': m_out.flatten().tolist(),
             'tcSize': args.tc_size,
             'tcMax': tc_max.tolist(),
             'tc': b64u16(tc_q),
@@ -507,7 +519,7 @@ def main():
     cmax_q = np.clip(np.rint(cmax / cmax_max * 65535), 0, 65535).astype(np.uint16)
 
     out = {
-        'version': '1.0',
+        'version': '1.1',
         'source': {
             'project': 'spektrafilm',
             'url': 'https://github.com/andreavolpato/spektrafilm',
@@ -534,6 +546,9 @@ def main():
         'papers': papers,
         'neutral': neutral,
     }
+
+    if args.revision:
+        out['source']['revision'] = args.revision
 
     payload = json.dumps(out, separators=(',', ':'), ensure_ascii=False)
     header = (

@@ -87,6 +87,7 @@
     '正像': 'Positive',
     '负像': 'Negative',
     'D50 观察光': 'D50 viewing light',
+    '观察光': 'viewing light',
     '换纸会重新烘焙当前胶卷的 LUT。': 'Changing paper rebakes the current film LUT.',
     '光谱 LUT 计算失败，请换一组胶卷 / 相纸重试': 'Could not calculate the spectral LUT; try another film/paper combination',
     'LUT 计算失败 · 请换一组胶卷 / 相纸重试': 'LUT calculation failed · Try another film/paper combination',

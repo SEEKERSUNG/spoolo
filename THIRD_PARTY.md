@@ -38,12 +38,16 @@ DIR coupler、相纸感光曲线、染料密度、中性滤色片等。
 
 - 原作者：**Andrea Volpato**
 - 原项目：<https://github.com/andreavolpato/spektrafilm>
+- 本次核对的上游提交：`3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`（同时记录在 `S.SPEKTRA_DATA.source.revision`）
 - 数据许可：**Creative Commons Attribution-ShareAlike 4.0 International
   (CC BY-SA 4.0)**
 - 许可全文：[`third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt`](third_party/spektrafilm/SPEKTRAFILM_LICENSE.txt)
   （上游原文，未修改）
 - 修改说明：数据被重新编码为 base64 Float32 / Uint16 数组；`tc` LUT
   重采样为 49×49；输出 C_max 表量化为 Uint16；只导出色彩链所需字段。
+  Vision3 200T / 500T 按上游使用 `T` 白炽参考光，Kodak 2383 / 2393 按上游
+  使用 `K75P` 观察光；每张胶片额外保存自己的输出矩阵，反转片 direct scan
+  不借用相纸矩阵。未知参考光 / 观察光在生成和运行时显式报错，不做替代。
   修改者：SPOOLO project / SEEKERSUNG，2026 年。数据本身仍按
   CC BY-SA 4.0 提供；任何再分发或修改必须保留上述署名、来源链接、
   CC BY-SA 4.0 许可说明，并注明修改。
@@ -57,6 +61,6 @@ DIR coupler、相纸感光曲线、染料密度、中性滤色片等。
 ## 商标说明
 
 SPOOLO 和 spektrafilm 都不隶属于 Kodak、Fujifilm 或其他胶片厂商。
-项目中的胶卷 / 相纸名称直接来自上游 spektrafilm profile 的 stock 名，
-仅用于标识对应的测量数据；光谱数据来自公开厂商资料与上游项目的测量 /
-建模，不表示任何厂商授权或背书。
+项目中的胶卷名称直接来自上游 spektrafilm profile 的 stock 名，相纸显示名
+采用上游名称的界面缩写，均只用于标识对应的测量数据；光谱数据来自公开
+厂商资料与上游项目的测量 / 建模，不表示任何厂商授权或背书。

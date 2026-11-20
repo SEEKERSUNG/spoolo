@@ -306,7 +306,7 @@
     gl.uniform1i(U.comp.noise, 2);
     gl.uniform1i(U.comp.noiseSoft, 3);
 
-    var W = 0, H = 0, HW = 0, HH = 0;
+    var W = 0, H = 0, HW = 0, HH = 0, specW = 0, specH = 0;
     var srcTex = null, specTex = null, noiseTex = null, noiseSoftTex = null, noiseData = null;
     var colorT = null, colorFbo = null;
     var lensT = null, lensFbo = null;
@@ -386,6 +386,7 @@
       [colorFbo, lensFbo, maskAFbo, maskBFbo, maskCFbo].forEach(function (f) { if (f) gl.deleteFramebuffer(f); });
       srcTex = specTex = colorT = lensT = maskA = maskB = maskC = null;
       colorFbo = lensFbo = maskAFbo = maskBFbo = maskCFbo = null;
+      specW = specH = 0;
     }
 
     function ensureSize(w, h) {
@@ -409,8 +410,6 @@
       maskBFbo = fbo(maskB);
       maskC = tex(HW, HH, gl.LINEAR);
       maskCFbo = fbo(maskC);
-
-      specTex = tex(1, 1, gl.LINEAR);
     }
 
     function draw(target, w, h) {
@@ -434,7 +433,8 @@
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, srcTex);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
+        /* 源图纹理在 ensureSize 已按同尺寸分配：复用存储，避免每拍一张都重建。 */
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
 
         /* 色彩：spektrafilm 的 3D LUT，以 2D 图集承载 */
         var spec = opts.spectralLut || null;
@@ -447,9 +447,15 @@
         gl.uniform1f(U.color.specTiles, spec.tiles);
         gl.uniform1f(U.color.specRows, spec.rows);
         gl.activeTexture(gl.TEXTURE2);
+        if (!specTex || specW !== spec.atlasW || specH !== spec.atlasH) {
+          if (specTex) gl.deleteTexture(specTex);
+          specTex = tex(spec.atlasW, spec.atlasH, gl.LINEAR);
+          specW = spec.atlasW;
+          specH = spec.atlasH;
+        }
         gl.bindTexture(gl.TEXTURE_2D, specTex);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, spec.atlasW, spec.atlasH, 0,
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, spec.atlasW, spec.atlasH,
           gl.RGBA, gl.UNSIGNED_BYTE, spec.atlas);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, srcTex);
